@@ -1,14 +1,11 @@
+import { plainTheme } from "./helpers/render.js";
+import { disposeAfterTest } from "./helpers/cleanup.js";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { DISPLAY_TEMPLATES, legacySegmentsToLayout } from "../src/display.js";
 import { createFooterComponent, renderFooterLine } from "../src/footer.js";
 import { type AtelierConfig, type AtelierState, DEFAULT_CONFIG, type FooterState } from "../src/types.js";
 
-const plainTheme = {
-	fg: (_color: string, text: string) => text,
-	bold: (text: string) => text,
-	italic: (text: string) => text,
-};
 const stripAnsi = (text: string) => text.replace(/\u001b\[[0-9;]*m/g, "");
 
 // Expected shell-prompt glyphs are part of the rendered footer contract.
@@ -50,12 +47,21 @@ function plainAt(width: number, config = DEFAULT_CONFIG, renderState = state): s
 	return stripAnsi(renderFooterLine(renderState, config, plainTheme, width));
 }
 
-function firstWidthWithout(text: string, config = DEFAULT_CONFIG, renderState = state): number {
-	expect(plainAt(180, config, renderState)).toContain(text);
-	for (let width = 179; width >= 20; width -= 1) {
-		if (!plainAt(width, config, renderState).includes(text)) return width;
+function disappearanceWidths(markers: string[], config = DEFAULT_CONFIG, renderState = state): number[] {
+	const wide = plainAt(180, config, renderState);
+	for (const marker of markers) expect(wide).toContain(marker);
+	const missing = new Map<string, number>();
+	for (let width = 179; width >= 20 && missing.size < markers.length; width -= 1) {
+		const line = plainAt(width, config, renderState);
+		for (const marker of markers) {
+			if (!missing.has(marker) && !line.includes(marker)) missing.set(marker, width);
+		}
 	}
-	throw new Error(`Expected ${text} to be removed`);
+	return markers.map((marker) => {
+		const width = missing.get(marker);
+		if (width === undefined) throw new Error(`Expected ${marker} to be removed`);
+		return width;
+	});
 }
 
 const withVisible = (ids: Parameters<typeof legacySegmentsToLayout>[0], overrides = {}) => ({
@@ -111,6 +117,19 @@ const state: AtelierState = {
 	},
 	extensionStatuses: [],
 };
+
+function createFooter(options: Partial<Parameters<typeof createFooterComponent>[0]> = {}) {
+	return disposeAfterTest(
+		createFooterComponent({
+			getState: () => state,
+			getConfig: () => DEFAULT_CONFIG,
+			requestRender: vi.fn(),
+			onBranchChange: () => vi.fn(),
+			theme: plainTheme,
+			...options,
+		}),
+	);
+}
 
 describe("footer performance", () => {
 	it("renders configured response performance in the Status Rail", () => {
@@ -210,7 +229,7 @@ describe("composer header and telemetry", () => {
 	});
 
 	it("hides unmeasured telemetry and omits the row when the menu is hidden", () => {
-		const component = createFooterComponent({
+		const component = createFooter({
 			getState: () => unmeasured,
 			getConfig: () => ({
 				...config,
@@ -218,9 +237,6 @@ describe("composer header and telemetry", () => {
 					entry.id === "menu" ? { ...entry, visible: false } : entry,
 				),
 			}),
-			requestRender: vi.fn(),
-			onBranchChange: () => vi.fn(),
-			theme: plainTheme,
 		});
 		try {
 			expect(component.renderTelemetry(160)).toEqual([]);
@@ -282,12 +298,10 @@ describe("composer header and telemetry", () => {
 	it("keeps header animation running when telemetry is rendered afterwards", () => {
 		vi.useFakeTimers();
 		const requestRender = vi.fn();
-		const component = createFooterComponent({
+		const component = createFooter({
 			getState: () => ({ ...session, activity: "working", workingLabel: "PONDERING" }),
 			getConfig: () => config,
 			requestRender,
-			onBranchChange: () => vi.fn(),
-			theme: plainTheme,
 		});
 		try {
 			expect(component.renderHeader(160)).toContain("PONDERING...");
@@ -345,14 +359,17 @@ describe("footer", () => {
 	});
 
 	it("drops secondary detail before workspace identity and required context", () => {
-		const menuGone = firstWidthWithout("F6");
-		const thinkingGone = firstWidthWithout("medium");
-		const costGone = firstWidthWithout("$5.041");
-		const inputGone = firstWidthWithout(`${icons.input} 324k`);
-		const outputGone = firstWidthWithout(`${icons.output} 15k`);
-		const cacheGone = firstWidthWithout(`${icons.cache} 99%`);
-		const gitGone = firstWidthWithout("main*");
-		const modelGone = firstWidthWithout("gpt-5.6-sol");
+		const [menuGone, thinkingGone, costGone, inputGone, outputGone, cacheGone, gitGone, modelGone] =
+			disappearanceWidths([
+				"F6",
+				"medium",
+				"$5.041",
+				`${icons.input} 324k`,
+				`${icons.output} 15k`,
+				`${icons.cache} 99%`,
+				"main*",
+				"gpt-5.6-sol",
+			]) as [number, number, number, number, number, number, number, number];
 		expect(menuGone).toBeGreaterThan(thinkingGone);
 		expect(thinkingGone).toBeGreaterThan(costGone);
 		expect(costGone).toBeGreaterThan(inputGone);
@@ -374,10 +391,11 @@ describe("footer", () => {
 		expect(plainAt(180, config, configuredState)).toEqual(expect.stringContaining("ATELIER"));
 		expect(plainAt(180, config, configuredState)).toEqual(expect.stringContaining("INDEXING"));
 
-		const brandGone = firstWidthWithout("ATELIER", config, configuredState);
-		const statusGone = firstWidthWithout("INDEXING", config, configuredState);
-		const gitGone = firstWidthWithout("main*", config, configuredState);
-		const thinkingGone = firstWidthWithout("medium", config, configuredState);
+		const [brandGone, statusGone, gitGone, thinkingGone] = disappearanceWidths(
+			["ATELIER", "INDEXING", "main*", "medium"],
+			config,
+			configuredState,
+		) as [number, number, number, number];
 		expect(Math.min(brandGone, statusGone)).toBeGreaterThan(Math.max(gitGone, thinkingGone));
 	});
 
@@ -813,13 +831,7 @@ describe("footer", () => {
 		vi.useFakeTimers();
 		const requestRender = vi.fn();
 		const working = { ...state, activity: "working" as const, workingLabel: "PHOTOSYNTHESIZING" };
-		const component = createFooterComponent({
-			getState: () => working,
-			getConfig: () => DEFAULT_CONFIG,
-			requestRender,
-			onBranchChange: () => vi.fn(),
-			theme: plainTheme,
-		});
+		const component = createFooter({ getState: () => working, requestRender });
 
 		try {
 			expect(component.render(160)[0]).toContain("PHOTOSYNTHESIZING...");
@@ -847,13 +859,7 @@ describe("footer", () => {
 		};
 		let config = DEFAULT_CONFIG;
 		const requestRender = vi.fn();
-		const component = createFooterComponent({
-			getState: () => current,
-			getConfig: () => config,
-			requestRender,
-			onBranchChange: () => vi.fn(),
-			theme: plainTheme,
-		});
+		const component = createFooter({ getState: () => current, getConfig: () => config, requestRender });
 
 		try {
 			expect(component.render(20)[0]).not.toContain("PONDERING");
@@ -885,7 +891,7 @@ describe("footer", () => {
 
 	it("does not animate when an omitted activity label appears in another segment", () => {
 		vi.useFakeTimers();
-		const component = createFooterComponent({
+		const component = createFooter({
 			getState: () => ({
 				...state,
 				activity: "working",
@@ -898,9 +904,6 @@ describe("footer", () => {
 					entry.id === "activity" ? { ...entry, visible: false } : { ...entry },
 				),
 			}),
-			requestRender: vi.fn(),
-			onBranchChange: () => vi.fn(),
-			theme: plainTheme,
 		});
 
 		try {
@@ -954,15 +957,12 @@ describe("footer", () => {
 		const unsubscribe = vi.fn();
 		let callback: (() => void) | undefined;
 		const requestRender = vi.fn();
-		const component = createFooterComponent({
-			getState: () => state,
-			getConfig: () => DEFAULT_CONFIG,
+		const component = createFooter({
 			requestRender,
 			onBranchChange: (listener) => {
 				callback = listener;
 				return unsubscribe;
 			},
-			theme: plainTheme,
 		});
 		callback?.();
 		expect(requestRender).toHaveBeenCalledOnce();
@@ -973,12 +973,8 @@ describe("footer", () => {
 
 	it("does not restart animation when rendered after disposal", () => {
 		vi.useFakeTimers();
-		const component = createFooterComponent({
+		const component = createFooter({
 			getState: () => ({ ...state, activity: "working", workingLabel: "PONDERING" }),
-			getConfig: () => DEFAULT_CONFIG,
-			requestRender: vi.fn(),
-			onBranchChange: () => vi.fn(),
-			theme: plainTheme,
 		});
 
 		try {
@@ -994,12 +990,9 @@ describe("footer", () => {
 	it("clears the animation timer and prevents redraws after disposal", () => {
 		vi.useFakeTimers();
 		const requestRender = vi.fn();
-		const component = createFooterComponent({
+		const component = createFooter({
 			getState: () => ({ ...state, activity: "working", workingLabel: "PONDERING" }),
-			getConfig: () => DEFAULT_CONFIG,
 			requestRender,
-			onBranchChange: () => vi.fn(),
-			theme: plainTheme,
 		});
 
 		try {

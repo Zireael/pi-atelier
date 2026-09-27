@@ -30,6 +30,7 @@ describe("configuration validation", () => {
 			"context",
 			"workspace",
 			"usage",
+			"subagents",
 			"tools",
 		]);
 	});

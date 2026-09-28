@@ -266,6 +266,12 @@ export class AtelierRuntime {
 			const sidebarPanelLayout = patch.sidebarPanelLayout.map((entry) => ({ ...entry }));
 			this.#config = { ...this.#config, sidebarPanelLayout };
 		}
+		if (patch.contributedPanelCollapsed) {
+			this.#config = {
+				...this.#config,
+				contributedPanelCollapsed: { ...patch.contributedPanelCollapsed },
+			};
+		}
 		const target = resolveDisplayLayers(this.#displayLayers).display;
 		let session = { ...this.#displayLayers.session };
 		for (const key of ["preset", "density", "segmentLayout"] as const) {

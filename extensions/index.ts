@@ -52,17 +52,28 @@ import type {
 } from "../src/types.js";
 
 export type {
+	SidebarBarNode,
+	SidebarBarSegment,
+	SidebarHeadingNode,
+	SidebarKeyValueNode,
 	SidebarPanelContribution,
 	SidebarPanelData,
 	SidebarPanelDiscoveryEvent,
 	SidebarPanelEvent,
 	SidebarPanelEventTransport,
+	SidebarPanelNode,
 	SidebarPanelRegisterEvent,
 	SidebarPanelRegistry,
 	SidebarPanelRegistryOptions,
+	SidebarPanelRichContent,
 	SidebarPanelRole,
 	SidebarPanelRow,
 	SidebarPanelUnregisterEvent,
+	SidebarProgressNode,
+	SidebarSpacerNode,
+	SidebarSpan,
+	SidebarSpansNode,
+	SidebarTextNode,
 } from "../src/sidebar-panels.js";
 export {
 	BUILTIN_SIDEBAR_PANEL_IDS,
@@ -76,12 +87,16 @@ export {
 	isSidebarPanelTextWithinRawLimit,
 	normalizeSidebarPanelLayout,
 	registerSidebarPanel,
+	sanitizeSidebarPanelRich,
 	SIDEBAR_PANEL_EVENT_CHANNEL,
 	SIDEBAR_PANEL_MAX_ID_CHARS,
 	SIDEBAR_PANEL_MAX_PANELS,
 	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RICH_NODES,
+	SIDEBAR_PANEL_MAX_RICH_SEGMENTS,
+	SIDEBAR_PANEL_MAX_RICH_SPANS,
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
@@ -443,6 +458,7 @@ export default function atelierExtension(
 						BUILTIN_SIDEBAR_PANEL_IDS.includes(entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
 						contributed !== undefined,
 					visible: entry.visible,
+					...(contributed?.rich?.collapsible === true ? { collapsible: true } : {}),
 				};
 			}),
 			...Array.from(available.values())
@@ -452,6 +468,7 @@ export default function atelierExtension(
 					title: panel.title,
 					available: true,
 					visible: false,
+					...(panel.rich?.collapsible === true ? { collapsible: true } : {}),
 				})),
 		];
 	}

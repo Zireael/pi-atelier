@@ -8,7 +8,10 @@ import {
 	buildSidebarSnapshot,
 	createSidebarComponent,
 	createSidebarController,
+	createSidebarPanelRegistry,
 	renderSidebarLines,
+	type SidebarPanelContribution,
+	type SidebarPanelData,
 } from "../src/sidebar.js";
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
 import { type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
@@ -1654,5 +1657,197 @@ describe("todos panel", () => {
 		expect(lines.join("")).not.toContain("[31m");
 		const rows = contentRows(lines);
 		expect(rows).toContain("○ #1 Taskred");
+	});
+});
+
+describe("contributed rich panels (REQ-ATELIER-002..008)", () => {
+	const richConfig = (collapsed: Record<string, boolean> = {}) => ({
+		...DEFAULT_CONFIG,
+		sidebarPanelLayout: [
+			{ id: "vendor:rich" as const, visible: true },
+			...DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false })),
+		],
+		contributedPanelCollapsed: collapsed,
+	});
+
+	/** Register through the public registry seam so sanitization runs first. */
+	const registered = (contribution: SidebarPanelContribution): SidebarPanelData => {
+		// Self-contained so it is also safe while the suite is collecting.
+		const registry = createSidebarPanelRegistry({});
+		try {
+			if (!registry.register(contribution, "vendor")) throw new Error("contribution was rejected");
+			const stored = registry.get("vendor:rich");
+			if (!stored) throw new Error("panel was not stored");
+			return stored;
+		} finally {
+			registry.dispose();
+		}
+	};
+
+	const richPanel: SidebarPanelData = registered({
+		id: "vendor:rich",
+		title: "Metrics",
+		rows: [{ text: "fallback row" }],
+		rich: {
+			version: 1,
+			expanded: [
+				{ kind: "heading", text: "Overview", role: "accent" },
+				{ kind: "text", text: "plain text" },
+				{
+					kind: "spans",
+					spans: [
+						{ text: "cat ", color: "#ff8800" },
+						{ text: "value", role: "muted" },
+					],
+				},
+				{ kind: "keyValue", label: "Memories", value: "9K", valueColor: "#00ff00" },
+				{
+					kind: "bar",
+					segments: [
+						{ key: "sys", value: 8, color: "#123456" },
+						{ key: "docs", value: 4 },
+					],
+					label: "tokens",
+				},
+				{ kind: "progress", label: "Index", current: 20, total: 100, detail: "2s" },
+				{ kind: "spacer" },
+			],
+			compact: [{ kind: "keyValue", label: "Mem", value: "9K" }],
+			collapsible: true,
+		},
+	});
+
+	const render = (
+		panel: SidebarPanelData,
+		options: { config?: ReturnType<typeof richConfig>; color?: boolean } = {},
+	) =>
+		renderSidebarLines(
+			{ ...snapshot(), sidebarPanels: [panel] },
+			options.config ?? richConfig(),
+			theme,
+			44,
+			60,
+			options.color ?? true,
+			0,
+		);
+
+	it("renders sanitized rich nodes instead of rows with literal true-color", () => {
+		const lines = render(richPanel);
+		const raw = lines.join("\n");
+		// Literal #RRGGBB arrives as terminal true-color (REQ-ATELIER-005).
+		expect(raw).toContain("\u001b[38;2;255;136;0m");
+		expect(raw).toContain("\u001b[38;2;0;255;0m");
+		expect(raw).toContain("\u001b[38;2;18;52;86m");
+		const rows = contentRows(lines);
+		expect(rows).toContain("METRICS");
+		expect(rows.join("\n")).toContain("Overview");
+		expect(rows.join("\n")).toContain("plain text");
+		expect(rows.join("\n")).toContain("cat value");
+		expect(rows.join("\n")).toContain("Memories 9K");
+		expect(rows.join("\n")).toContain("Index 20/100 (20%) 2s");
+		expect(rows.join("\n")).toContain("tokens");
+		expect(rows.join("\n")).toContain("█");
+		expect(rows.join("\n")).not.toContain("fallback row");
+	});
+
+	it("uses the semantic role palette when true-color is unavailable", () => {
+		const lines = render(richPanel, { color: false });
+		const raw = lines.join("\n");
+		expect(raw).not.toContain("[38;2;");
+		const rows = contentRows(lines);
+		expect(rows.join("\n")).toContain("cat value");
+		expect(rows.join("\n")).toContain("Memories 9K");
+	});
+
+	it("keeps spacer nodes as blank rows inside the panel body", () => {
+		const spacerPattern = /^\s*│\s+│\s*$/;
+		const withSpacer = render(richPanel).map(stripAnsi);
+		expect(withSpacer.filter((line) => spacerPattern.test(line))).toHaveLength(1);
+		const withoutSpacer = registered({
+			id: "vendor:rich",
+			title: "Metrics",
+			rows: [{ text: "fallback row" }],
+			rich: {
+				version: 1,
+				expanded: [
+					{ kind: "heading", text: "Overview", role: "accent" },
+					{ kind: "text", text: "plain text" },
+					{
+						kind: "spans",
+						spans: [
+							{ text: "cat ", color: "#ff8800" },
+							{ text: "value", role: "muted" },
+						],
+					},
+					{ kind: "keyValue", label: "Memories", value: "9K", valueColor: "#00ff00" },
+					{
+						kind: "bar",
+						segments: [
+							{ key: "sys", value: 8, color: "#123456" },
+							{ key: "docs", value: 4 },
+						],
+						label: "tokens",
+					},
+					{ kind: "progress", label: "Index", current: 20, total: 100, detail: "2s" },
+				],
+			},
+		});
+		expect(
+			render(withoutSpacer)
+				.map(stripAnsi)
+				.filter((line) => spacerPattern.test(line)),
+		).toHaveLength(0);
+	});
+
+	it("falls back to protocol rows whenever rich is missing or invalid (registry + render)", () => {
+		// Row-only contribution: no rich key at all.
+		const rowOnly = registered({ id: "vendor:rich", title: "Metrics", rows: [{ text: "fallback row" }] });
+		expect(rowOnly && "rich" in rowOnly).toBe(false);
+		expect(contentRows(render(rowOnly)).join("\n")).toContain("fallback row");
+
+		// Invalid literal color: the registry drops rich but keeps the panel.
+		const invalid = registered({
+			id: "vendor:rich",
+			title: "Metrics",
+			rows: [{ text: "fallback row" }],
+			rich: { version: 1, expanded: [{ kind: "spans", spans: [{ text: "x", color: "red" }] }] },
+		} as unknown as SidebarPanelContribution);
+		expect(invalid.rich).toBeUndefined();
+		expect(contentRows(render(invalid)).join("\n")).toContain("fallback row");
+
+		// Valid rich with an empty expanded representation renders nothing useful
+		// and must still fall back to rows (REQ-ATELIER-008).
+		const empty = registered({
+			id: "vendor:rich",
+			title: "Metrics",
+			rows: [{ text: "fallback row" }],
+			rich: { version: 1, expanded: [] },
+		});
+		expect(empty.rich).toBeDefined();
+		expect(contentRows(render(empty)).join("\n")).toContain("fallback row");
+	});
+
+	it("renders the compact representation from Atelier-local collapse state", () => {
+		const expanded = contentRows(render(richPanel)).join("\n");
+		expect(expanded).toContain("Overview");
+		expect(expanded).not.toContain("Mem 9K");
+
+		const collapsedConfig = richConfig({ "vendor:rich": true });
+		const collapsed = contentRows(render(richPanel, { config: collapsedConfig })).join("\n");
+		expect(collapsed).toContain("Mem 9K");
+		expect(collapsed).not.toContain("Overview");
+		expect(collapsed).not.toContain("fallback row");
+
+		// Collapse state without a producer-supplied compact representation
+		// keeps the expanded representation (never rows).
+		const noCompact = registered({
+			id: "vendor:rich",
+			title: "Metrics",
+			rows: [{ text: "fallback row" }],
+			rich: { version: 1, expanded: [{ kind: "text", text: "always here" }] },
+		});
+		const kept = contentRows(render(noCompact, { config: collapsedConfig })).join("\n");
+		expect(kept).toContain("always here");
+		expect(kept).not.toContain("fallback row");
 	});
 });

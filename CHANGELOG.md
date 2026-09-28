@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add optional bounded `rich` content to contributed sidebar panels: flat text, spans, key/value, heading, segmented bar, progress and spacer nodes with validated `#RRGGBB` true-color, compact/expanded representations and Atelier-local per-panel collapse state (toggle with `C` on the panel row in Display Settings). Protocol-v1 `rows` remain the mandatory fallback and row-only producers behave exactly as before.
+
 ## 0.12.0 — 2026-09-26
 
 - Keep sidebar plot space reserved while a dialog covers it, instead of switching smooth native curves into character staircases. Restore the plot after the dialog closes.

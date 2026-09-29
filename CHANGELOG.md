@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.12.1 — 2026-09-30
+
 - Mark host-provided Pi peers optional so ordinary npm installs do not download a redundant Pi dependency tree. Add a packed-install regression check and dependency audits to the validation gate ([#81](https://github.com/michaelmjhhhh/pi-atelier/issues/81)).
 - Update development dependencies to resolve known audit findings while retaining Pi 0.84.0 and Node.js 22.19.0 as the minimum supported versions.
 

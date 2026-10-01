@@ -1,3 +1,4 @@
+import { plainTheme } from "./helpers/render.js";
 import { describe, expect, it, vi } from "vitest";
 import { initTheme } from "@earendil-works/pi-coding-agent";
 import { SIDEBAR_PANEL_EVENT_CHANNEL } from "../extensions/index.js";
@@ -17,7 +18,6 @@ import {
 	renderFooter,
 	queueWorkspacePulseInspection,
 	execResult,
-	FOOTER_THEME,
 } from "./helpers/extension.js";
 
 describe("extension session", () => {
@@ -634,7 +634,7 @@ describe("extension session", () => {
 		const requestRender = vi.fn();
 		const factory = h.setFooter.mock.calls[0]?.[0];
 		expect(factory).toEqual(expect.any(Function));
-		const footer = factory({ requestRender }, FOOTER_THEME, {
+		const footer = factory({ requestRender }, plainTheme, {
 			getGitBranch: () => undefined,
 			getExtensionStatuses: () => new Map(),
 			onBranchChange: (callback: () => void) => {
@@ -775,16 +775,20 @@ describe("extension session", () => {
 		expect(activeFooterRender).toHaveBeenCalled();
 	});
 
-	it("closes the old sidebar and starts the replacement visible on session reload", async () => {
-		const h = harness();
-		await start(h);
+	it.each([false, true])(
+		"closes the old sidebar and reopens the replacement on reload (closed first: %s)",
+		async (closedFirst) => {
+			const h = harness();
+			await start(h);
+			if (closedFirst) await command(h, "sidebar off");
 
-		await start(h);
+			await start(h);
 
-		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
-		expect(h.custom).toHaveBeenCalledTimes(2);
-		expect(h.overlays[1]?.done).not.toHaveBeenCalled();
-	});
+			expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
+			expect(h.custom).toHaveBeenCalledTimes(2);
+			expect(h.overlays[1]?.done).not.toHaveBeenCalled();
+		},
+	);
 
 	it.each(["sidebar off", "disable", "enable"])("ignores stale session command: %s", async (args) => {
 		const h = harness();
@@ -803,18 +807,6 @@ describe("extension session", () => {
 			"Pi Atelier is not active in this session",
 			"warning",
 		);
-	});
-
-	it("reopens by default on reload after an explicit session-scoped close", async () => {
-		const h = harness();
-		await start(h);
-		await command(h, "sidebar off");
-		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
-
-		await start(h);
-
-		expect(h.custom).toHaveBeenCalledTimes(2);
-		expect(h.overlays[1]?.done).not.toHaveBeenCalled();
 	});
 
 	it("replaces and removes the ask-user blocked listener with the session lifecycle", async () => {

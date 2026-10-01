@@ -721,7 +721,23 @@ function contributedRichNodes(
 				}
 				const empty = Math.max(0, BAR_WIDTH - used);
 				const bar = `${blocks.join("")}${empty > 0 ? palette.paint("dim", "░".repeat(empty)) : ""}`;
-				return node.label ? `${bar} ${palette.paint("muted", node.label)}` : bar;
+				const caption = node.label ? ` ${palette.paint("muted", node.label)}` : "";
+
+				// A producer that labels every segment has expressed those
+				// categories as VALUES, not as proportions. A 20-cell strip cannot
+				// also carry them at sidebar widths, and a half-shown list reads as
+				// "the rest are zero", so the values replace the strip.
+				// A partially labelled bar keeps the strip: dropping the unlabelled
+				// entries would misreport them as absent.
+				const labels = node.segments.map((segment) => segment.label?.trim() ?? "");
+				if (labels.length > 0 && labels.every((label) => label.length > 0)) {
+					const values = node.segments.map((segment, index) =>
+						paintRich(palette, segment.color, segment.role, fallback, labels[index] ?? ""),
+					);
+					return `${values.join(" ")}${caption}`;
+				}
+
+				return `${bar}${caption}`;
 			}
 			case "progress": {
 				const percent =

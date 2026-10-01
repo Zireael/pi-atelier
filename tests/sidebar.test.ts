@@ -1750,6 +1750,85 @@ describe("contributed rich panels (REQ-ATELIER-002..008)", () => {
 		expect(rows.join("\n")).not.toContain("fallback row");
 	});
 
+	const barPanel = (
+		segments: readonly {
+			key: string;
+			value: number;
+			color?: `#${string}`;
+			label?: string;
+		}[],
+	) =>
+		registered({
+			id: "vendor:rich",
+			title: "Metrics",
+			rows: [{ text: "fallback row" }],
+			rich: {
+				version: 1,
+				expanded: [{ kind: "bar", segments, label: "tokens" }],
+				collapsible: true,
+			},
+		});
+
+	it("lists every labelled segment's value instead of drawing the strip", () => {
+		const text = contentRows(
+			render(
+				barPanel([
+					{ key: "sys", value: 8, color: "#123456", label: "8K" },
+					{ key: "conv", value: 4, color: "#654321", label: "30K" },
+				]),
+			),
+		).join("\n");
+		// The producer expressed these categories as values. At sidebar widths a
+		// 20-cell strip cannot also carry them, so the strip is skipped rather
+		// than truncated into a partial list.
+		expect(text).toContain("8K 30K tokens");
+		expect(text).not.toContain("█");
+		expect(text).not.toContain("░");
+	});
+
+	it("paints each value in its own segment color", () => {
+		const raw = render(
+			barPanel([
+				{ key: "sys", value: 8, color: "#123456", label: "8K" },
+				{ key: "conv", value: 4, color: "#654321", label: "30K" },
+			]),
+		);
+		const line = raw.find((row) => stripAnsi(row).includes("8K"));
+		// Asserted on the line carrying the VALUE, not on the whole panel: the
+		// old strip painted segment colors too, so a panel-wide check would
+		// pass without proving the number carries its own block's color.
+		expect(line, "the rendered value line").toBeDefined();
+		expect(line).toContain("\u001b[38;2;18;52;86m");
+		expect(line).toContain("\u001b[38;2;101;67;33m");
+	});
+
+	it("keeps the strip when only some segments are labelled", () => {
+		const text = contentRows(
+			render(
+				barPanel([
+					{ key: "sys", value: 8, label: "8K" },
+					{ key: "conv", value: 4 },
+				]),
+			),
+		).join("\n");
+		// Showing only the labelled entries would read as "the rest are zero".
+		expect(text).toContain("█");
+		expect(text).not.toContain("8K");
+	});
+
+	it("ignores blank labels rather than rendering empty gaps", () => {
+		const text = contentRows(
+			render(
+				barPanel([
+					{ key: "sys", value: 8, label: "8K" },
+					{ key: "conv", value: 4, label: "   " },
+				]),
+			),
+		).join("\n");
+		expect(text).toContain("█");
+		expect(text).not.toContain("8K");
+	});
+
 	it("uses the semantic role palette when true-color is unavailable", () => {
 		const lines = render(richPanel, { color: false });
 		const raw = lines.join("\n");

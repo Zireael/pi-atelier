@@ -1,0 +1,95 @@
+Manual Pi 0.84.0 terminal review, 2026-10-02. macOS 26.3 arm64; Node 22.22.2.
+40 rows; dimensions noted per scenario. Isolated checkout extension, ephemeral sessions.
+Selected emitted terminal text with ANSI removed, not screenshots or automated tests.
+Fullscreen session precedes the invalid-width guard; regular session includes it.
+
+fullscreen startup 140x40
+                                                                                                  ╭─ ✦ AGENT ──────────────────────────────╮
+  AGENTS.md                                                                                       │ First token                          — │
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77   0.0% / 272k  ─────╮
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% / 272k  ────╮
+
+fullscreen Auto width 123
+  AGENTS.md
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% / 272k  ───────────────────────────────╮
+
+fullscreen Auto width 131
+  AGENTS.md
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% / 272k  ───────────────────────────────────────╮
+
+fullscreen Auto width 132
+                                                                                          ╭─ ✦ AGENT ──────────────────────────────╮
+  AGENTS.md                                                                               │ First token                          — │
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% ─────╮
+
+fullscreen switch Manual
+ pi v0.84.0                                                                               ╭─ ✦ AGENT ──────────────────────────────╮
+  AGENTS.md                                                                               ╭─ ✦ ACTIVITY ───────────────────────────╮
+ Sidebar: Manual
+
+fullscreen Manual CtrlShiftR
+ pi v0.84.0                                                                             │ RESIZE · drag divider
+ Press ctrl+o to show full startup help and loaded resources.                           │ ╭─ ✦ AGENT ──────────────────────────────╮
+  AGENTS.md                                                                             │ ╰────────────────────────────────────────╯
+ Sidebar: Manual                                                                        │
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% ─────╮│
+
+fullscreen Manual grow one column
+ pi v0.84.0                                                                            │ RESIZE · drag divider
+ Press ctrl+o to show full startup help and loaded resources.                          │ ╭─ ✦ AGENT ───────────────────────────────╮
+  AGENTS.md                                                                            │ ╰─────────────────────────────────────────╯
+ Sidebar: Manual                                                                       │
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% ────╮│
+
+fullscreen Manual Escape cancels resize
+ pi v0.84.0                                                                               ╭─ ✦ AGENT ──────────────────────────────╮
+  AGENTS.md                                                                               ╭─ ✦ ACTIVITY ───────────────────────────╮
+ Sidebar: Manual
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% ─────╮
+
+fullscreen explicit Off
+  AGENTS.md
+ Sidebar: Manual · hidden
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% / 272k  ────────────────────────────────────────╮
+
+fullscreen Auto while explicitly Off
+ Sidebar: Auto · hidden
+
+fullscreen explicitly hidden Auto width 150
+  AGENTS.md
+ Sidebar: Auto · hidden
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% / 272k  ──────────────────────────────────────────────────────────╮
+
+regular startup Auto 140x40 (with invalid-width fix loaded)
+$0.000 (sub) 0.0%/272k (auto)                                                                                              gpt-5.6-sol • low                                                                                                  ╭─ ✦ AGENT ──────────────────────────────╮
+  AGENTS.md                                                                                       │ First token                          — │
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77   0.0% / 272k  ─────╮
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% / 272k  ────╮  │ Enabled                          4 / 7 │
+
+regular Auto width 123
+  AGENTS.md
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% / 272k  ───────────────────────────────╮
+
+regular Auto width 131
+  AGENTS.md
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% / 272k  ───────────────────────────────────────╮
+
+regular Auto width 132
+                                                                                          ╭─ ✦ AGENT ──────────────────────────────╮
+  AGENTS.md                                                                               │ First token                          — │
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% ─────╮
+
+regular Manual
+ Sidebar: Manual
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% ─────╮
+
+regular Manual width 91
+  AGENTS.md
+ Sidebar: Manual
+╭─ ● READY   gpt-5.6-sol ·  low   pi-atelier-pr77 ·  review/pr-77*   0.0% ────────╮
+
+regular Manual width 92
+ how to use or extend Pi.                                         ╭─ ✦ AGENT ──────────────╮
+  AGENTS.md                                                       │ Thinking           low │
+ Sidebar: Manual
+╭─ ● READY   gpt-5.6-sol   review/pr-77*   0.0% ─────────╮

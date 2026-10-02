@@ -134,6 +134,7 @@ describe("extension registration", () => {
 			onHandle: expect.any(Function),
 		});
 		expect(h.overlays[0]?.layout()).toMatchObject({ nonCapturing: true });
+		await command(h, "sidebar on");
 		await command(h, "sidebar");
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 		await command(h, "sidebar");
@@ -177,7 +178,7 @@ describe("extension registration", () => {
 		const h = harness();
 		await start(h);
 		await command(h, args);
-		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Usage: /atelier sidebar [on|off]", "warning");
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Usage: /atelier sidebar [auto|manual|on|off]", "warning");
 		expect(h.custom).toHaveBeenCalledOnce();
 	});
 
@@ -199,6 +200,8 @@ describe("extension registration", () => {
 	it("enters Resize mode with Ctrl+Shift+R only for the active visible sidebar", async () => {
 		const h = harness();
 		await start(h);
+		await command(h, "sidebar manual");
+		await command(h, "sidebar on");
 		await h.shortcutHandlers.get("ctrl+shift+r")?.(h.ctx);
 		expect(h.terminalWrite).toHaveBeenCalledWith("\u001b[?1002h\u001b[?1006h");
 
@@ -223,6 +226,7 @@ describe("extension registration", () => {
 	it("disable closes the sidebar and restores mouse state", async () => {
 		const h = harness();
 		await start(h);
+		await command(h, "sidebar manual");
 		await command(h, "sidebar on");
 		await h.shortcutHandlers.get("ctrl+shift+r")?.(h.ctx);
 
@@ -342,7 +346,7 @@ describe("extension registration", () => {
 		await h.mounted(1);
 		expect(h.overlays).toHaveLength(2);
 		const menu = renderOverlayText(h, 1, 80);
-		expect(menu).toContain("Sidebar: On");
+		expect(menu).toContain("Sidebar: Auto");
 		h.overlays[1]?.component.handleInput("\u001b");
 		await opening;
 	});

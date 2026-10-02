@@ -15,7 +15,7 @@ import {
 	type ToolActivity,
 } from "./run-activity.js";
 import { isBuiltinSidebarPanelId, type SidebarPanelData } from "./sidebar-panels.js";
-import { createSplitPaneController } from "./split-pane.js";
+import { createSplitPaneController, type SidebarMode, type SidebarStatus } from "./split-pane.js";
 import { createInertAtelierState } from "./state.js";
 import { type SubagentCostChartGraphics, subagentCostChart } from "./subagent-cost-chart.js";
 import { errorMessage, fitToWidth, PLACEHOLDER, sanitizeInline } from "./text.js";
@@ -874,6 +874,8 @@ export function createSidebarComponent(options: SidebarComponentOptions): Compon
 
 export interface SidebarController {
 	show(): void;
+	setMode(mode: SidebarMode): void;
+	getStatus(): SidebarStatus;
 	hide(): void;
 	toggle(): void;
 	isVisible(): boolean;
@@ -964,6 +966,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 
 	const split = createSplitPaneController({
 		subscribeInput: (handler) => options.ctx.ui.onTerminalInput(handler),
+		onVisibilityChange: () => syncAnimation(),
 		onResizeChange: () => {
 			safely(() => requestOverlayRender?.());
 		},
@@ -978,7 +981,12 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 	};
 
 	const syncAnimation = () => {
-		if (!enabled || !options.shouldAnimate?.() || !requestOverlayRender) {
+		if (
+			!enabled ||
+			split.getStatus().presentation !== "shown" ||
+			!options.shouldAnimate?.() ||
+			!requestOverlayRender
+		) {
 			stopAnimation();
 			return;
 		}
@@ -1095,14 +1103,19 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 	};
 
 	return {
-		show,
+		show: () => show(),
 		hide,
+		setMode(mode) {
+			safely(() => split.setMode(mode));
+			syncAnimation();
+		},
+		getStatus: split.getStatus,
 		toggle() {
 			if (enabled) hide();
 			else show();
 		},
 		isVisible() {
-			return enabled;
+			return enabled && split.getStatus().presentation === "shown";
 		},
 		beginResize: split.beginResize,
 		isResizing: split.isResizing,

@@ -430,6 +430,7 @@ describe("extension session", () => {
 	it("closes an enabled sidebar and resize input during shutdown", async () => {
 		const h = harness();
 		await start(h);
+		await command(h, "sidebar manual");
 		await command(h, "sidebar on");
 		await h.shortcutHandlers.get("ctrl+shift+r")?.(h.ctx);
 		expect(h.terminalWrite).toHaveBeenLastCalledWith("\u001b[?1002h\u001b[?1006h");

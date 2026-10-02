@@ -22,12 +22,21 @@ import {
 	getDisplaySettingsViewportHeight,
 	type SidebarPanelSetting,
 } from "./settings-workspace.js";
+import type { SidebarMode, SidebarStatus } from "./split-pane.js";
 import type { AtelierRuntime } from "./state.js";
 import { errorMessage, fitToWidth, isColorEnabled } from "./text.js";
 import type { AtelierConfig } from "./types.js";
 
 type SaveConfigPatch = typeof saveUserConfigPatch;
 type ThinkingLevel = Parameters<ExtensionAPI["setThinkingLevel"]>[0];
+
+export function sidebarStatusLabel(status: SidebarStatus): string {
+	const label = status.mode === "auto" ? "Auto" : "Manual";
+	if (!status.enabled) return `${label} · hidden`;
+	return status.presentation === "auto-collapsed" || status.presentation === "too-narrow"
+		? `${label} · hidden: narrow terminal`
+		: label;
+}
 
 interface MenuOptions {
 	lifetime?: OverlayLifetime;
@@ -40,7 +49,8 @@ interface ControlCenterOptions extends MenuOptions {
 const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 
 export interface SidebarControls {
-	isVisible(): boolean;
+	getStatus(): SidebarStatus;
+	setMode(mode: SidebarMode): void;
 	toggle(): void;
 	isToolListExpanded(): boolean;
 	toggleToolList(): Promise<void>;
@@ -162,7 +172,7 @@ export function createMenuActions(
 			persistPreference(
 				{ showSidebarOnStartup: enabled },
 				{
-					saved: `Sidebar will start ${enabled ? "shown" : "hidden"}`,
+					saved: `Sidebar will start ${enabled ? "in Auto mode" : "hidden"}`,
 					failed: "Sidebar startup preference could not be saved",
 				},
 				true,
@@ -388,7 +398,7 @@ export async function openAtelierControlCenter(
 				},
 				{
 					value: "sidebar-startup",
-					label: `Sidebar on startup: ${onOff(config.showSidebarOnStartup)}`,
+					label: `Sidebar on startup: ${config.showSidebarOnStartup ? "Auto" : "Off"}`,
 					description: "Global user preference",
 				},
 				{
@@ -459,13 +469,32 @@ export async function openAtelierControlCenter(
 		}
 	};
 
+	const sidebarMenu = async (): Promise<void> => {
+		const mode = await choose("Sidebar mode", [
+			{ value: "auto", label: "Auto", description: "Show when there is comfortable reading space" },
+			{
+				value: "manual",
+				label: "Manual",
+				description: "Adjust width manually; hide only when too narrow to fit",
+			},
+			{
+				value: "toggle",
+				label: sidebar.getStatus().enabled ? "Hide sidebar" : "Show sidebar",
+				description: "Keep the current mode",
+			},
+			{ value: "back", label: "Back" },
+		]);
+		if (mode === "auto" || mode === "manual") sidebar.setMode(mode);
+		else if (mode === "toggle") sidebar.toggle();
+	};
+
 	const controlsMenu = async (): Promise<void> => {
 		for (;;) {
 			const choice = await choose("Controls", [
 				{
 					value: "sidebar",
-					label: `Sidebar: ${onOff(sidebar.isVisible())}`,
-					description: "Session control; shown by default",
+					label: `Sidebar: ${sidebarStatusLabel(sidebar.getStatus())}`,
+					description: "Choose Auto or Manual; show or hide independently",
 				},
 				{
 					value: "model",
@@ -481,7 +510,7 @@ export async function openAtelierControlCenter(
 			]);
 			switch (choice) {
 				case "sidebar":
-					sidebar.toggle();
+					await sidebarMenu();
 					break;
 				case "model":
 					await modelMenu();
@@ -501,7 +530,7 @@ export async function openAtelierControlCenter(
 			{
 				value: "controls",
 				label: "Controls",
-				description: `Session controls · Sidebar: ${onOff(sidebar.isVisible())}`,
+				description: `Session controls · Sidebar: ${sidebarStatusLabel(sidebar.getStatus())}`,
 			},
 			...(openUsage
 				? [{ value: "usage", label: "Subagent usage", description: "Cost curves and individual reply costs" }]

@@ -73,7 +73,8 @@ function harness() {
 
 function sidebarControls(): SidebarControls {
 	return {
-		isVisible: vi.fn(() => true),
+		getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
+		setMode: vi.fn(),
 		toggle: vi.fn(),
 		isToolListExpanded: vi.fn(() => false),
 		toggleToolList: vi.fn().mockResolvedValue(undefined),
@@ -134,7 +135,9 @@ describe("Control Center presentation", () => {
 			sidebar,
 		);
 		expect(rootMenuItems[0]?.map((item) => item.label)).toEqual(["Settings", "Controls", "Close"]);
-		expect(rootMenuItems[0]?.find((item) => item.value === "controls")?.description).toContain("Sidebar: On");
+		expect(rootMenuItems[0]?.find((item) => item.value === "controls")?.description).toContain(
+			"Sidebar: Manual",
+		);
 	});
 
 	it.each([
@@ -143,7 +146,7 @@ describe("Control Center presentation", () => {
 			[
 				"Display: editorial",
 				"Font mode: Nerd Font",
-				"Sidebar on startup: On",
+				"Sidebar on startup: Auto",
 				"Completion notifications: On",
 				"Sidebar tool list: Collapsed",
 				"Back",
@@ -336,7 +339,7 @@ describe("Control Center presentation", () => {
 				getThinkingLevel: vi.fn().mockReturnValue("medium"),
 				getActiveTools: vi.fn().mockReturnValue([]),
 			} as never,
-			contextWithSelections(["controls", "sidebar", "back", "close"]) as never,
+			contextWithSelections(["controls", "sidebar", "toggle", "back", "close"]) as never,
 			harness().runtime as never,
 			"/tmp/user.json",
 			sidebar,

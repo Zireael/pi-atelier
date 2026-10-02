@@ -18,7 +18,7 @@ import { DEFAULT_CONFIG, loadConfig, saveUserConfigPatch } from "../src/config.j
 import { AtelierEditor } from "../src/editor.js";
 import { type AtelierFooterComponent, createFooterComponent } from "../src/footer.js";
 import { createImageCompositorBinding } from "../src/image-compositor.js";
-import { openAtelierControlCenter, openDisplaySettingsWorkspace } from "../src/menu.js";
+import { openAtelierControlCenter, openDisplaySettingsWorkspace, sidebarStatusLabel } from "../src/menu.js";
 import type { OverlayLifetime } from "../src/overlay-lifecycle.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import type { SidebarPanelSetting } from "../src/settings-workspace.js";
@@ -374,7 +374,10 @@ export default function atelierExtension(
 			runtime,
 			userConfigPath(),
 			{
-				isVisible: () => isCurrent() && sidebar.isVisible(),
+				getStatus: () => sidebar.getStatus(),
+				setMode: (mode) => {
+					if (enabled && isCurrent()) sidebar.setMode(mode);
+				},
 				toggle: () => {
 					if (enabled && isCurrent()) sidebar.toggle();
 				},
@@ -546,10 +549,18 @@ export default function atelierExtension(
 						);
 					return;
 				}
-				if (extra.length > 0 || !isOnOff(sidebarAction)) usage(ctx, "sidebar [on|off]");
+				if (
+					extra.length > 0 ||
+					(!isOnOff(sidebarAction) && sidebarAction !== "auto" && sidebarAction !== "manual")
+				) {
+					usage(ctx, "sidebar [auto|manual|on|off]");
+					return;
+				}
+				if (sidebarAction === "auto" || sidebarAction === "manual") current.sidebar.setMode(sidebarAction);
 				else if (sidebarAction === "on") current.sidebar.show();
 				else if (sidebarAction === "off") current.sidebar.hide();
 				else current.sidebar.toggle();
+				ctx.ui.notify(`Sidebar: ${sidebarStatusLabel(current.sidebar.getStatus())}`, "info");
 			},
 			disable: (ctx) => {
 				const current = requireActiveSession(ctx);
@@ -596,7 +607,7 @@ export default function atelierExtension(
 		description: "Resize Pi Atelier sidebar",
 		handler: (shortcutContext) => {
 			const current = getActiveSession(shortcutContext);
-			if (!current?.sidebar.isVisible()) {
+			if (!current?.sidebar.getStatus().enabled) {
 				shortcutContext.ui.notify("Show the Pi Atelier sidebar before resizing it", "warning");
 				return;
 			}
@@ -762,6 +773,7 @@ export default function atelierExtension(
 			published = session;
 			if (previousSession) disposeSession(previousSession, { clearFooter: true });
 			registerCustomShortcut(ctx, loaded.config.shortcut);
+			session.sidebar.setMode("auto");
 			if (enabled) {
 				installFooter(session);
 				if (loaded.config.showSidebarOnStartup) session.sidebar.show();
@@ -837,7 +849,7 @@ export default function atelierExtension(
 		// Keep state updates independent from whether the TODO panel is currently presented.
 		current.todos = todos;
 		const sidebarVisible = current.sidebar.isVisible();
-		if (sidebarVisible) current.sidebar.requestRender();
+		current.sidebar.requestRender();
 		const todoPanelVisible = current.runtime
 			.getConfig()
 			.sidebarPanelLayout.some((entry) => entry.id === "todos" && entry.visible);

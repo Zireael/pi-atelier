@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Automatically collapse the Sidebar when terminal width is limited and restore it when space returns. Add independent Auto/Manual modes and show/hide controls; preserve preferred width and full TODO output while collapsed ([#76](https://github.com/michaelmjhhhh/pi-atelier/issues/76)).
+
 ## 0.13.0 — 2026-10-02
 
 - Strip OSC hyperlinks and other terminal control sequences from footer, sidebar, notification, and chart text; previously only color codes were removed, leaving link targets visible ([#83](https://github.com/michaelmjhhhh/pi-atelier/issues/83)).

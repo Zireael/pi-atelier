@@ -50,7 +50,7 @@ export function harness(
 	const tui = {
 		...fakeTui(),
 		render: baseRender,
-		terminal: { columns: 120, rows: 36, width: 120, write: terminalWrite },
+		terminal: { columns: 140, rows: 36, width: 140, write: terminalWrite },
 	};
 	const host = overlayHost(() => tui, interactiveMenus);
 	const { overlays, custom } = host;

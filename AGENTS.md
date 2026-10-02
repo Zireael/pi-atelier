@@ -20,10 +20,6 @@ Publish releases with `npm publish --access public`. The maintainer completes np
 
 Tag a new release on github at the end. 
 
-## Subagent
-
-For every subagent, launch with openai-codex/gpt-5.6-luna with xhight effort. 
-
 ## Tone
 
 Keep your response tone concise, technical, and straightforward. Do not include any flair or prose.

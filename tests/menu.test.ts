@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
-import { resolveDisplayLayers } from "../src/config.js";
+import { deferred } from "./helpers/async.js";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { resolveDisplayLayers, DEFAULT_CONFIG } from "../src/config.js";
 
 const rootMenuItems = vi.hoisted(() => [] as Array<Array<Record<string, unknown>>>);
 vi.mock("@earendil-works/pi-tui", async (importOriginal) => {
@@ -19,19 +20,9 @@ import {
 	createMenuActions,
 	openAtelierControlCenter,
 	openDisplaySettingsWorkspace,
-	renderMenuFrame,
 	type SidebarControls,
 } from "../src/menu.js";
-import { DEFAULT_CONFIG } from "../src/types.js";
 import { getDisplaySettingsViewportHeight } from "../src/settings-workspace.js";
-
-function deferred<T>() {
-	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((done) => {
-		resolve = done;
-	});
-	return { promise, resolve };
-}
 
 function harness() {
 	let config = {
@@ -80,7 +71,29 @@ function harness() {
 	return { actions, pi, ctx, runtime, savePatch };
 }
 
+function sidebarControls(): SidebarControls {
+	return {
+		getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
+		setMode: vi.fn(),
+		toggle: vi.fn(),
+		isToolListExpanded: vi.fn(() => false),
+		toggleToolList: vi.fn().mockResolvedValue(undefined),
+		getSidebarPanelSettings: vi.fn(() =>
+			DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({
+				id: entry.id,
+				title: entry.id,
+				available: true,
+				visible: entry.visible,
+			})),
+		),
+	};
+}
+
 describe("Control Center presentation", () => {
+	beforeEach(() => {
+		rootMenuItems.length = 0;
+	});
+
 	function contextWithSelections(
 		values: string[],
 		terminal: { columns: number; rows: number } = { columns: 140, rows: 42 },
@@ -113,14 +126,7 @@ describe("Control Center presentation", () => {
 	}
 
 	it("partitions Settings and Controls at the root with current Sidebar state", async () => {
-		rootMenuItems.length = 0;
-		const sidebar: SidebarControls = {
-			getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
-			setMode: vi.fn(),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
+		const sidebar = sidebarControls();
 		await openAtelierControlCenter(
 			{} as never,
 			contextWithSelections(["close"]) as never,
@@ -147,14 +153,7 @@ describe("Control Center presentation", () => {
 			],
 		],
 	] as const)("routes the %s root category to its destination", async (category, expectedLabels) => {
-		rootMenuItems.length = 0;
-		const sidebar: SidebarControls = {
-			getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
-			setMode: vi.fn(),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
+		const sidebar = sidebarControls();
 		await openAtelierControlCenter(
 			{} as never,
 			contextWithSelections([category, "back", "close"]) as never,
@@ -195,12 +194,13 @@ describe("Control Center presentation", () => {
 		const opening = openDisplaySettingsWorkspace(
 			h.ctx as never,
 			h.runtime as never,
+			h.runtime.getSidebarPanelSettings,
 			"/tmp/user.json",
 			() => undefined,
 			h.savePatch,
 			{ lifetime },
 		);
-		await vi.waitFor(() => expect(components).toHaveLength(1));
+		expect(components).toHaveLength(1);
 		components[0].handleInput("\u001b");
 		await opening;
 
@@ -220,6 +220,7 @@ describe("Control Center presentation", () => {
 		await openDisplaySettingsWorkspace(
 			ctx as never,
 			h.runtime as never,
+			h.runtime.getSidebarPanelSettings,
 			"/tmp/user.json",
 			requestAllRenders,
 			h.savePatch,
@@ -228,7 +229,7 @@ describe("Control Center presentation", () => {
 		const workspace = components[0] as { handleInput(data: string): void };
 		workspace.handleInput(" ");
 		workspace.handleInput("s");
-		await vi.waitFor(() => expect(h.savePatch).toHaveBeenCalledOnce());
+		expect(h.savePatch).toHaveBeenCalledOnce();
 		expect(requestAllRenders).toHaveBeenCalled();
 		expect(h.savePatch).toHaveBeenCalledWith(
 			"/tmp/user.json",
@@ -237,7 +238,6 @@ describe("Control Center presentation", () => {
 	});
 
 	it("propagates Control Center renders through the active callbacks", async () => {
-		rootMenuItems.length = 0;
 		const h = harness();
 		const components: any[] = [];
 		const ctx = contextWithSelections(
@@ -249,13 +249,7 @@ describe("Control Center presentation", () => {
 			components,
 		);
 		const requestAllRenders = vi.fn();
-		const sidebar: SidebarControls = {
-			getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
-			setMode: vi.fn(),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
+		const sidebar = sidebarControls();
 		await openAtelierControlCenter(
 			h.pi as never,
 			ctx as never,
@@ -268,20 +262,13 @@ describe("Control Center presentation", () => {
 		const workspace = components[2] as { handleInput(data: string): void };
 		workspace.handleInput(" ");
 		workspace.handleInput("s");
-		await vi.waitFor(() => expect(h.savePatch).toHaveBeenCalledOnce());
+		expect(h.savePatch).toHaveBeenCalledOnce();
 		expect(requestAllRenders).toHaveBeenCalled();
 	});
 
 	it("toggles and persists Sidebar startup from Settings", async () => {
-		rootMenuItems.length = 0;
 		const h = harness();
-		const sidebar: SidebarControls = {
-			getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
-			setMode: vi.fn(),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
+		const sidebar = sidebarControls();
 
 		await openAtelierControlCenter(
 			h.pi as never,
@@ -298,15 +285,8 @@ describe("Control Center presentation", () => {
 	});
 
 	it("routes Control Center Settings → Display to the workspace", async () => {
-		rootMenuItems.length = 0;
 		const ctx = contextWithSelections(["settings", "display", "workspace-close", "back", "close"]);
-		const sidebar: SidebarControls = {
-			getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
-			setMode: vi.fn(),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
+		const sidebar = sidebarControls();
 		await openAtelierControlCenter(
 			{} as never,
 			ctx as never,
@@ -322,7 +302,6 @@ describe("Control Center presentation", () => {
 	});
 
 	it("derives the workspace viewport from live terminal rows and Pi overlay rounding", async () => {
-		rootMenuItems.length = 0;
 		const terminal = { columns: 140, rows: 42 };
 		const customComponents: unknown[] = [];
 		const ctx = contextWithSelections(
@@ -330,13 +309,7 @@ describe("Control Center presentation", () => {
 			terminal,
 			customComponents,
 		);
-		const sidebar: SidebarControls = {
-			getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
-			setMode: vi.fn(),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
+		const sidebar = sidebarControls();
 		await openAtelierControlCenter(
 			{} as never,
 			ctx as never,
@@ -359,15 +332,8 @@ describe("Control Center presentation", () => {
 		expect(workspace.render(126)).toHaveLength(47);
 	});
 
-	it("keeps Sidebar visibility in Controls and session-scoped", async () => {
-		rootMenuItems.length = 0;
-		const sidebar: SidebarControls = {
-			getStatus: vi.fn(() => ({ mode: "manual" as const, enabled: true, presentation: "shown" as const })),
-			setMode: vi.fn(),
-			toggle: vi.fn(),
-			isToolListExpanded: vi.fn(() => false),
-			toggleToolList: vi.fn().mockResolvedValue(undefined),
-		};
+	it("toggles Sidebar visibility from Controls", async () => {
+		const sidebar = sidebarControls();
 		await openAtelierControlCenter(
 			{
 				getThinkingLevel: vi.fn().mockReturnValue("medium"),
@@ -379,11 +345,6 @@ describe("Control Center presentation", () => {
 			sidebar,
 		);
 		expect(sidebar.toggle).toHaveBeenCalledOnce();
-	});
-
-	it("frames every content row with heavy vertical borders and corners", () => {
-		const theme = { fg: (_color: string, text: string) => text, bold: (text: string) => text };
-		expect(renderMenuFrame(theme, ["Hi"], 8)).toEqual(["┏━━━━━━┓", "┃Hi    ┃", "┗━━━━━━┛"]);
 	});
 });
 

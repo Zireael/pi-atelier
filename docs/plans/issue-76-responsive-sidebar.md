@@ -4,6 +4,8 @@ Source: https://github.com/michaelmjhhhh/pi-atelier/issues/76
 Branch: `feat/76-responsive-sidebar`
 Status: implemented; updated after user feedback to exactly two modes, Auto and Manual. Target-laptop visual verification remains pending.
 
+Latest review: [2026-10-02 integration and regression audit](../issue-76-review.md). Integrated current main, preserved invalid-width expansion history, and reran the full gate and regular/fullscreen terminal scenarios. Remaining visual checks below are still pending.
+
 ## Approved behavior
 
 Mode and the display switch are independent session settings.

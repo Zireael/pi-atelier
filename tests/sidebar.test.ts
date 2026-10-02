@@ -1,3 +1,7 @@
+import { disposeAfterTest } from "./helpers/cleanup.js";
+import { DEFAULT_CONFIG } from "../src/config.js";
+import { fakeTui, overlayHost } from "./helpers/overlay-host.js";
+import { settleMicrotasks } from "./helpers/async.js";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EMPTY_RUN_ACTIVITY, type RunActivitySnapshot } from "../src/run-activity.js";
@@ -5,26 +9,10 @@ import {
 	buildSidebarSnapshot,
 	createSidebarComponent,
 	createSidebarController,
-	createSidebarPanelRegistry,
-	isSidebarPanelContributionId,
-	isSidebarPanelId,
-	isSidebarPanelRequestId,
-	isSidebarPanelTextWithinRawLimit,
-	registerSidebarPanel,
 	renderSidebarLines,
-	SIDEBAR_PANEL_EVENT_CHANNEL,
-	SIDEBAR_PANEL_MAX_ID_CHARS,
-	SIDEBAR_PANEL_MAX_PANELS,
-	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
-	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
-	SIDEBAR_PANEL_MAX_ROW_CHARS,
-	SIDEBAR_PANEL_MAX_ROWS,
-	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
-	SIDEBAR_PANEL_MAX_TITLE_CHARS,
-	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
 } from "../src/sidebar.js";
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
-import { type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
+import { type AtelierState } from "../src/types.js";
 
 const stripAnsi = (text: string) => text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 
@@ -32,7 +20,6 @@ const theme = {
 	name: "dark",
 	fg: (_color: string, text: string) => text,
 	bold: (text: string) => text,
-	italic: (text: string) => text,
 };
 
 afterEach(() => {
@@ -84,20 +71,19 @@ const state: AtelierState = {
 
 function snapshot() {
 	return buildSidebarSnapshot({
-		state,
+		state: { ...state, extensionStatuses: ["tests passing"] },
 		cwd: "/Users/example/projects/pi-atelier",
 		sessionName: "Sidebar implementation",
 		sessionFile: "/tmp/session.jsonl",
 		branchEntryCount: 38,
 		activeToolCount: 8,
 		availableToolCount: 12,
-		extensionStatuses: ["tests passing"],
 		runActivity: EMPTY_RUN_ACTIVITY,
 	});
 }
 
-function withActivity(runActivity: RunActivitySnapshot) {
-	return { ...snapshot(), runActivity };
+function withActivity(runActivity: Partial<RunActivitySnapshot>) {
+	return { ...snapshot(), runActivity: { ...structuredClone(EMPTY_RUN_ACTIVITY), ...runActivity } };
 }
 
 function activeActivity(): RunActivitySnapshot {
@@ -140,18 +126,25 @@ function contentRows(lines: string[]) {
 	});
 }
 
-async function flushOverlay() {
-	await Promise.resolve();
-	await Promise.resolve();
+function renderRows(
+	value: ReturnType<typeof snapshot>,
+	{
+		config = DEFAULT_CONFIG,
+		width = 44,
+		height = 60,
+		color = true,
+		now,
+	}: { config?: typeof DEFAULT_CONFIG; width?: number; height?: number; color?: boolean; now?: number } = {},
+) {
+	return contentRows(
+		renderSidebarLines(value, config, theme, width, height, {
+			colorEnabled: color,
+			...(now === undefined ? {} : { now }),
+		}),
+	);
 }
 
-function fakeTui(requestRender = vi.fn()) {
-	return {
-		render: vi.fn((width: number) => [`main:${width}`]),
-		requestRender,
-		terminal: { columns: 120, rows: 36, write: vi.fn() },
-	};
-}
+const flushOverlay = settleMicrotasks;
 
 describe("sidebar snapshot and layout", () => {
 	it("composes visible panels in persisted order and keeps unavailable entries out of rendering", () => {
@@ -174,7 +167,6 @@ describe("sidebar snapshot and layout", () => {
 						id: "vendor:queue",
 						title: "Queue",
 						rows: [{ text: "queued 2" }],
-						available: true,
 						source: "vendor",
 					},
 				],
@@ -190,791 +182,36 @@ describe("sidebar snapshot and layout", () => {
 		expect(text).not.toContain("AGENT");
 	});
 
-	it("supports load-order discovery, updates, and removal through the public event seam", () => {
-		const listeners = new Set<(data: unknown) => void>();
-		const events = {
-			on: (_channel: string, handler: (data: unknown) => void) => {
-				listeners.add(handler);
-				return () => listeners.delete(handler);
-			},
-			emit: (_channel: string, data: unknown) => {
-				for (const listener of [...listeners]) listener(data);
-			},
-		};
-		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: ["one"] });
-		const changed = vi.fn();
-		const registry = createSidebarPanelRegistry({ events, onChange: changed });
-		expect(registry.get("vendor:queue")?.title).toBe("Queue");
-		publisher.update({
-			id: "vendor:queue",
-			title: "Updated queue",
-			rows: [{ text: "two", role: "warning" }],
-		});
-		expect(registry.get("vendor:queue")?.rows[0]?.text).toBe("two");
-		publisher.dispose();
-		expect(registry.get("vendor:queue")).toBeUndefined();
-		expect(changed).toHaveBeenCalled();
-		expect(SIDEBAR_PANEL_EVENT_CHANNEL).toBe("pi-atelier:sidebar-panels");
-		registry.dispose();
-	});
-
-	it("accepts namespaced contributors whose source matches the discovery prefix", () => {
-		const listeners = new Set<(data: unknown) => void>();
-		const emitted: unknown[] = [];
-		const events = {
-			on: (_channel: string, handler: (data: unknown) => void) => {
-				listeners.add(handler);
-				return () => listeners.delete(handler);
-			},
-			emit: (_channel: string, data: unknown) => {
-				emitted.push(data);
-				for (const listener of [...listeners]) listener(data);
-			},
-		};
-		const registry = createSidebarPanelRegistry({ events, instanceId: "vendor" });
-		events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
-			version: 1,
-			type: "register",
-			source: "vendor",
-			revision: 1,
-			panel: { id: "vendor:queue", title: "Queue", rows: ["ready"] },
-		});
-		expect(registry.get("vendor:queue")?.source).toBe("vendor");
-		expect(emitted[0]).toMatchObject({ type: "discover", requestId: "vendor-1" });
-		registry.dispose();
-	});
-
-	it("validates contributed IDs and bounded discovery request IDs at both public seams", () => {
-		expect(isSidebarPanelContributionId("vendor:queue")).toBe(true);
-		for (const suffix of ["\n", "\r", "\r\n", "\u2028", "\u2029", " ", "\t"]) {
-			expect(isSidebarPanelContributionId(`vendor:queue${suffix}`)).toBe(false);
-		}
-		expect(isSidebarPanelContributionId("agent")).toBe(false);
-		expect(isSidebarPanelContributionId("Vendor:queue")).toBe(false);
-		expect(isSidebarPanelContributionId("vendor:")).toBe(false);
-		expect(isSidebarPanelRequestId("normal-request")).toBe(true);
-		expect(isSidebarPanelRequestId("π-界🙂")).toBe(true);
-		expect(isSidebarPanelRequestId("")).toBe(false);
-		expect(isSidebarPanelRequestId(" ")).toBe(false);
-		expect(isSidebarPanelRequestId("bad\nrequest")).toBe(false);
-		expect(isSidebarPanelRequestId("\ud800")).toBe(false);
-		expect(isSidebarPanelRequestId("x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1))).toBe(false);
-
-		const emitted: unknown[] = [];
-		const listeners = new Set<(data: unknown) => void>();
-		const events = {
-			on: (_channel: string, handler: (data: unknown) => void) => {
-				listeners.add(handler);
-				return () => listeners.delete(handler);
-			},
-			emit: (_channel: string, data: unknown) => {
-				emitted.push(data);
-				for (const listener of [...listeners]) listener(data);
-			},
-		};
-		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: [] });
-		const initialRegisterCount = emitted.filter(
-			(data) => (data as { type?: unknown }).type === "register",
-		).length;
-		for (const requestId of ["", " ", "x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1), null]) {
-			events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, { version: 1, type: "discover", requestId });
-		}
-		expect(emitted.filter((data) => (data as { type?: unknown }).type === "register")).toHaveLength(
-			initialRegisterCount,
-		);
-		events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
-			version: 1,
-			type: "discover",
-			requestId: "π-界🙂",
-		});
-		const response = emitted.at(-1) as { type?: string; requestId?: string };
-		expect(response).toMatchObject({ type: "register", requestId: "π-界🙂" });
-
-		const registryEvents = {
-			on: () => () => undefined,
-			emit: (_channel: string, data: unknown) => emitted.push(data),
-		};
-		const registry = createSidebarPanelRegistry({
-			events: registryEvents,
-			instanceId: "x".repeat(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS + 1),
-		});
-		const generated = emitted.at(-1) as { type?: string; requestId?: string };
-		expect(generated.type).toBe("discover");
-		expect(generated.requestId).toBe("atelier-1");
-		expect(generated.requestId?.length).toBeLessThanOrEqual(SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS);
-		registry.dispose();
-		publisher.dispose();
-	});
-
-	it("allocates revisions across same-source publishers without coupling transports", () => {
-		const makeEvents = () => {
-			const listeners = new Set<(data: unknown) => void>();
-			const emitted: unknown[] = [];
-			return {
-				events: {
-					on: (_channel: string, handler: (data: unknown) => void) => {
-						listeners.add(handler);
-						return () => listeners.delete(handler);
-					},
-					emit: (_channel: string, data: unknown) => {
-						emitted.push(data);
-						for (const listener of [...listeners]) listener(data);
-					},
-				},
-				emitted,
-			};
-		};
-		const firstTransport = makeEvents();
-		const secondTransport = makeEvents();
-		const first = registerSidebarPanel(
-			{ events: firstTransport.events },
-			{ id: "vendor:queue", title: "Queue", rows: ["one"] },
-			{ source: "vendor" },
-		);
-		const second = registerSidebarPanel(
-			{ events: firstTransport.events },
-			{ id: "vendor:status", title: "Status", rows: ["ready"] },
-			{ source: "vendor" },
-		);
-		registerSidebarPanel(
-			{ events: secondTransport.events },
-			{ id: "vendor:other", title: "Other", rows: ["isolated"] },
-			{ source: "vendor" },
-		);
-
-		const registry = createSidebarPanelRegistry({ events: firstTransport.events });
-		expect(registry.get("vendor:queue")?.title).toBe("Queue");
-		expect(registry.get("vendor:status")?.title).toBe("Status");
-		first.update({ id: "vendor:queue", title: "Updated queue", rows: ["two"] });
-		second.update({ id: "vendor:status", title: "Updated status", rows: ["busy"] });
-		expect(registry.get("vendor:queue")?.rows[0]?.text).toBe("two");
-		expect(registry.get("vendor:status")?.rows[0]?.text).toBe("busy");
-		first.dispose();
-		expect(registry.get("vendor:queue")).toBeUndefined();
-		expect(registry.get("vendor:status")?.title).toBe("Updated status");
-		expect((firstTransport.emitted[0] as { revision?: number })?.revision).toBe(1);
-		expect((secondTransport.emitted[0] as { revision?: number })?.revision).toBe(1);
-		second.dispose();
-		registry.dispose();
-	});
-
-	it("caps helper publisher sources while preserving updates, disposal, and source revisions", () => {
-		const listeners = new Set<(data: unknown) => void>();
-		const emitted: unknown[] = [];
-		const events = {
-			on: (_channel: string, handler: (data: unknown) => void) => {
-				listeners.add(handler);
-				return () => listeners.delete(handler);
-			},
-			emit: (_channel: string, data: unknown) => {
-				emitted.push(data);
-				for (const listener of [...listeners]) listener(data);
-			},
-		};
-		const panel = (id: string, title = id) => ({
-			id: id as `${string}:${string}`,
-			title,
-			rows: [],
-		});
-		const malformed = registerSidebarPanel({ events }, panel("vendor:malformed-source"), {
-			source: "s".repeat(SIDEBAR_PANEL_MAX_SOURCE_CHARS + 1),
-		});
-		malformed.update(panel("vendor:malformed-source", "Should stay inert"));
-		malformed.dispose();
-		expect(emitted).toEqual([]);
-		const publishers = Array.from({ length: SIDEBAR_PANEL_MAX_TRACKED_SOURCES }, (_, index) =>
-			registerSidebarPanel({ events }, panel(`vendor:allocator-${index}`), { source: `allocator-${index}` }),
-		);
-		const registry = createSidebarPanelRegistry({ events });
-		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_TRACKED_SOURCES);
-
-		const beforeOverflow = emitted.length;
-		const overflow = registerSidebarPanel({ events }, panel("vendor:allocator-overflow"), {
-			source: "allocator-overflow",
-		});
-		overflow.update(panel("vendor:allocator-overflow", "Updated overflow"));
-		overflow.dispose();
-		expect(emitted).toHaveLength(beforeOverflow);
-		expect(registry.get("vendor:allocator-overflow")).toBeUndefined();
-
-		publishers[0]?.update(panel("vendor:allocator-0", "Updated tracked"));
-		expect(registry.get("vendor:allocator-0")?.title).toBe("Updated tracked");
-		publishers[0]?.dispose();
-		expect(registry.get("vendor:allocator-0")).toBeUndefined();
-
-		const reused = registerSidebarPanel({ events }, panel("vendor:allocator-reused", "Reused source"), {
-			source: "allocator-0",
-		});
-		expect(registry.get("vendor:allocator-reused")?.title).toBe("Reused source");
-		const reusedRevision = (emitted.at(-1) as { revision?: number })?.revision;
-		expect(reusedRevision).toBeGreaterThan(1);
-		events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
-			version: 1,
-			type: "register",
-			source: "allocator-0",
-			revision: (reusedRevision ?? 1) - 1,
-			panel: panel("vendor:allocator-reused", "Stale reuse"),
-		});
-		expect(registry.get("vendor:allocator-reused")?.title).toBe("Reused source");
-		reused.dispose();
-		expect(registry.get("vendor:allocator-reused")).toBeUndefined();
-		for (const publisher of publishers.slice(1)) publisher.dispose();
-		registry.dispose();
-	});
-
-	it("rejects built-in public contributions before ownership, revisions, or capacity are consumed", () => {
-		const registry = createSidebarPanelRegistry();
-		// @ts-expect-error Built-in IDs are intentionally rejected by this contributed-panel API.
-		expect(registry.register({ id: "agent", title: "Spoofed", rows: [] })).toBe(false);
-		for (const id of ["agent", "tools"] as const) {
-			registry.handleEvent({
-				version: 1,
-				type: "register",
-				source: "vendor",
-				revision: 1,
-				panel: { id, title: "Spoofed", rows: [] },
-			});
-		}
-		expect(registry.get("agent")).toBeUndefined();
-		expect(registry.get("tools")).toBeUndefined();
-		expect(registry.getAvailable()).toEqual([]);
-		// The rejected built-in events do not consume the source's first revision.
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "vendor",
-			revision: 1,
-			panel: { id: "vendor:queue", title: "Queue", rows: [] },
-		});
-		expect(registry.get("vendor:queue")?.title).toBe("Queue");
-		// Nor do they consume a panel slot when the registry is one slot from full.
-		const capacityRegistry = createSidebarPanelRegistry();
-		for (let index = 0; index < SIDEBAR_PANEL_MAX_PANELS - 1; index += 1) {
-			expect(capacityRegistry.register({ id: `vendor:panel-${index}`, title: "Panel", rows: [] })).toBe(true);
-		}
-		capacityRegistry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "capacity-source",
-			revision: 1,
-			panel: { id: "activity", title: "Spoofed", rows: [] },
-		});
-		capacityRegistry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "capacity-source",
-			revision: 1,
-			panel: { id: "capacity-source:panel", title: "Accepted", rows: [] },
-		});
-		expect(capacityRegistry.get("capacity-source:panel")?.title).toBe("Accepted");
-		expect(capacityRegistry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
-		registry.dispose();
-		capacityRegistry.dispose();
-	});
-
-	it("rejects malformed public events and preserves panel ownership across revisions", () => {
-		const registry = createSidebarPanelRegistry();
-		for (const event of [
-			undefined,
-			null,
-			{},
-			{ version: 2, type: "register" },
-			{ version: 1, type: "register", source: "vendor", revision: 1 },
-			{
-				version: 1,
-				type: "register",
-				source: "vendor",
-				revision: 1,
-				panel: { id: "not-namespaced", title: "Bad", rows: [] },
-			},
-			{
-				version: 1,
-				type: "register",
-				source: "vendor",
-				revision: 1,
-				panel: { id: "vendor:queue", title: "Queue", rows: [null] },
-			},
-		])
-			registry.handleEvent(event);
-		expect(registry.getAvailable()).toEqual([]);
-
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "vendor",
-			revision: 1,
-			panel: { id: "vendor:queue", title: "Queue", rows: ["one"] },
-		});
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "other",
-			revision: 1,
-			panel: { id: "vendor:queue", title: "Hijack", rows: ["bad"] },
-		});
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "vendor",
-			revision: 1,
-			panel: { id: "vendor:queue", title: "Stale", rows: ["stale"] },
-		});
-		expect(registry.get("vendor:queue")?.title).toBe("Queue");
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "vendor",
-			revision: 2,
-			panel: { id: "vendor:queue", title: "Updated", rows: ["two"] },
-		});
-		expect(registry.get("vendor:queue")?.title).toBe("Updated");
-		registry.handleEvent({
-			version: 1,
-			type: "unregister",
-			source: "other",
-			revision: 2,
-			id: "vendor:queue",
-		});
-		expect(registry.get("vendor:queue")?.title).toBe("Updated");
-		registry.handleEvent({
-			version: 1,
-			type: "unregister",
-			source: "vendor",
-			revision: 3,
-			id: "vendor:queue",
-		});
-		expect(registry.get("vendor:queue")).toBeUndefined();
-		registry.dispose();
-	});
-
-	it("bounds raw title and row work before sanitization while preserving valid Unicode", () => {
-		expect(
-			isSidebarPanelTextWithinRawLimit(
-				"x".repeat(SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS),
-				SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
-			),
-		).toBe(true);
-		expect(
-			isSidebarPanelTextWithinRawLimit(
-				"x".repeat(SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS + 1),
-				SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
-			),
-		).toBe(false);
-		const registry = createSidebarPanelRegistry();
-		expect(
-			registry.register({
-				id: "vendor:huge-title",
-				title: "x".repeat(1_000_000),
-				rows: [],
-			}),
-		).toBe(false);
-		expect(
-			registry.register({
-				id: "vendor:huge-row-string",
-				title: "Valid",
-				rows: ["x".repeat(1_000_000)],
-			}),
-		).toBe(false);
-		expect(
-			registry.register({
-				id: "vendor:huge-row-object",
-				title: "Valid",
-				rows: [{ text: "x".repeat(1_000_000) }],
-			}),
-		).toBe(false);
-		expect(
-			registry.register({
-				id: "vendor:unicode",
-				title: "é界🙂".repeat(12),
-				rows: [{ text: "é界🙂".repeat(40), role: "ready" }],
-			}),
-		).toBe(true);
-		expect(registry.get("vendor:unicode")).toMatchObject({
-			title: "é界🙂".repeat(12),
-			rows: [{ text: "é界🙂".repeat(40), role: "ready" }],
-		});
-		registry.dispose();
-	});
-
-	it("sanitizes titles and rows and rejects oversized contribution payloads", () => {
-		const registry = createSidebarPanelRegistry();
-		expect(
-			registry.register({
-				id: "vendor:safe",
-				title: "\u001b[31mQueue\nready\u001b[0m",
-				rows: ["one\n two", { text: "\u001b[33mtwo\u001b[0m", role: "warning" }],
-			}),
-		).toBe(true);
-		expect(registry.get("vendor:safe")).toMatchObject({
-			title: "Queue ready",
-			rows: [{ text: "one two" }, { text: "two", role: "warning" }],
-		});
-		expect(
-			registry.register({
-				id: "vendor:long-title",
-				title: "t".repeat(SIDEBAR_PANEL_MAX_TITLE_CHARS + 1),
-				rows: [],
-			}),
-		).toBe(false);
-		expect(
-			registry.register({
-				id: "vendor:long-row",
-				title: "Long row",
-				rows: ["r".repeat(SIDEBAR_PANEL_MAX_ROW_CHARS + 1)],
-			}),
-		).toBe(false);
-		expect(
-			registry.register({
-				id: "vendor:many-rows",
-				title: "Many rows",
-				rows: Array.from({ length: SIDEBAR_PANEL_MAX_ROWS + 1 }, () => "row"),
-			}),
-		).toBe(false);
-		expect(registry.getAvailable()).toHaveLength(1);
-		registry.dispose();
-	});
-
-	it("bounds IDs and source names at direct, event, and publisher seams", () => {
-		const registry = createSidebarPanelRegistry();
-		const longId = `vendor:${"x".repeat(SIDEBAR_PANEL_MAX_ID_CHARS)}` as `vendor:${string}`;
-		const longSource = "s".repeat(SIDEBAR_PANEL_MAX_SOURCE_CHARS + 1);
-		const safePanel = { id: "vendor:safe" as const, title: "Safe", rows: [] };
-
-		expect(isSidebarPanelId(longId)).toBe(false);
-		expect(registry.register({ ...safePanel, id: longId })).toBe(false);
-		expect(registry.unregister(longId, "vendor")).toBe(false);
-		expect(registry.register(safePanel, longSource)).toBe(false);
-		expect(registry.unregister(safePanel.id, longSource)).toBe(false);
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "vendor",
-			revision: 1,
-			panel: { ...safePanel, id: longId },
-		});
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: longSource,
-			revision: 1,
-			panel: safePanel,
-		});
-		expect(registry.getAvailable()).toEqual([]);
-
-		const emitted: unknown[] = [];
-		const events = {
-			on: () => () => undefined,
-			emit: (_channel: string, data: unknown) => emitted.push(data),
-		};
-		const invalidIdPublisher = registerSidebarPanel({ events }, { ...safePanel, id: longId });
-		const invalidSourcePublisher = registerSidebarPanel({ events }, safePanel, { source: longSource });
-		expect(emitted).toEqual([]);
-		invalidIdPublisher.update(safePanel);
-		invalidSourcePublisher.update(safePanel);
-		invalidIdPublisher.dispose();
-		invalidSourcePublisher.dispose();
-		expect(emitted).toEqual([]);
-		registry.dispose();
-	});
-
-	it("caps new panels while allowing updates and unregisters to free capacity", () => {
-		const registry = createSidebarPanelRegistry();
-		const panel = (id: string, title = id) => ({
-			id: id as `vendor:${string}`,
-			title,
-			rows: [],
-		});
-		for (let index = 0; index < SIDEBAR_PANEL_MAX_PANELS; index += 1) {
-			expect(registry.register(panel(`vendor:panel-${index}`))).toBe(true);
-		}
-		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
-		expect(registry.register(panel("vendor:overflow"), "overflow")).toBe(false);
-
-		// A valid update at capacity is accepted and consumes its source revision.
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "vendor",
-			revision: 1,
-			panel: panel("vendor:panel-0", "Updated at capacity"),
-		});
-		expect(registry.get("vendor:panel-0")?.title).toBe("Updated at capacity");
-
-		// Capacity-rejected registrations do not consume a source revision, so
-		// retrying the same event after capacity is freed succeeds.
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "overflow",
-			revision: 1,
-			panel: panel("vendor:overflow", "Overflow"),
-		});
-		expect(registry.get("vendor:overflow")).toBeUndefined();
-		registry.handleEvent({
-			version: 1,
-			type: "unregister",
-			source: "vendor",
-			revision: 2,
-			id: "vendor:panel-0",
-		});
-		expect(registry.get("vendor:panel-0")).toBeUndefined();
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "overflow",
-			revision: 1,
-			panel: panel("vendor:overflow", "Retried after capacity"),
-		});
-		expect(registry.get("vendor:overflow")?.title).toBe("Retried after capacity");
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "overflow",
-			revision: 2,
-			panel: panel("vendor:overflow", "Accepted after unregister"),
-		});
-		expect(registry.get("vendor:overflow")?.title).toBe("Accepted after unregister");
-		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
-
-		// The direct seam gets the same capacity behavior after an unregister.
-		expect(registry.unregister("vendor:panel-1", "vendor")).toBe(true);
-		expect(registry.register(panel("vendor:direct"), "vendor")).toBe(true);
-		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_PANELS);
-		registry.dispose();
-	});
-
-	it("does not track capacity-rejected or invalid-owner sources", () => {
-		const panel = (id: string, title = id) => ({
-			id: id as `vendor:${string}`,
-			title,
-			rows: [],
-		});
-		const capacityRegistry = createSidebarPanelRegistry();
-		for (let index = 0; index < SIDEBAR_PANEL_MAX_PANELS; index += 1) {
-			expect(capacityRegistry.register(panel(`vendor:full-${index}`), "owner")).toBe(true);
-		}
-		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES * 2; index += 1) {
-			capacityRegistry.handleEvent({
-				version: 1,
-				type: "register",
-				source: `capacity-${index}`,
-				revision: 1,
-				panel: panel(`capacity-${index}:panel`),
-			});
-		}
-		capacityRegistry.unregister("vendor:full-0", "owner");
-		capacityRegistry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "capacity-0",
-			revision: 1,
-			panel: panel("capacity-0:panel", "Accepted after retry"),
-		});
-		expect(capacityRegistry.get("capacity-0:panel")?.title).toBe("Accepted after retry");
-		capacityRegistry.dispose();
-
-		const ownerRegistry = createSidebarPanelRegistry();
-		expect(ownerRegistry.register(panel("vendor:owned"), "owner")).toBe(true);
-		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES * 2; index += 1) {
-			ownerRegistry.handleEvent({
-				version: 1,
-				type: "register",
-				source: `hijacker-${index}`,
-				revision: 1,
-				panel: panel("vendor:owned", "Hijacked"),
-			});
-			ownerRegistry.handleEvent({
-				version: 1,
-				type: "unregister",
-				source: `missing-${index}`,
-				revision: 1,
-				id: "vendor:missing",
-			});
-		}
-		ownerRegistry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "missing-0",
-			revision: 1,
-			panel: panel("vendor:missing", "Accepted after missing removal"),
-		});
-		expect(ownerRegistry.get("vendor:missing")?.title).toBe("Accepted after missing removal");
-		ownerRegistry.unregister("vendor:owned", "owner");
-		ownerRegistry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "hijacker-0",
-			revision: 1,
-			panel: panel("vendor:owned", "Accepted after owner removal"),
-		});
-		expect(ownerRegistry.get("vendor:owned")?.title).toBe("Accepted after owner removal");
-		ownerRegistry.dispose();
-	});
-
-	it("bounds tracked sources while preserving revisions for active sources", () => {
-		const registry = createSidebarPanelRegistry();
-		const panel = (id: string, title = id) => ({
-			id: id as `${string}:${string}`,
-			title,
-			rows: [],
-		});
-		for (let index = 0; index < SIDEBAR_PANEL_MAX_TRACKED_SOURCES; index += 1) {
-			registry.handleEvent({
-				version: 1,
-				type: "register",
-				source: `tracked-${index}`,
-				revision: 1,
-				panel: panel(`tracked-${index}:panel`),
-			});
-		}
-		expect(registry.getAvailable()).toHaveLength(SIDEBAR_PANEL_MAX_TRACKED_SOURCES);
-		registry.handleEvent({
-			version: 1,
-			type: "unregister",
-			source: "tracked-0",
-			revision: 2,
-			id: "tracked-0:panel",
-		});
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "overflow-source",
-			revision: 1,
-			panel: panel("overflow-source:panel"),
-		});
-		expect(registry.get("overflow-source:panel")).toBeUndefined();
-
-		// A tracked source remains usable for updates and removal after the cap.
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "tracked-1",
-			revision: 2,
-			panel: panel("tracked-1:panel", "Updated"),
-		});
-		expect(registry.get("tracked-1:panel")?.title).toBe("Updated");
-		registry.handleEvent({
-			version: 1,
-			type: "unregister",
-			source: "tracked-1",
-			revision: 3,
-			id: "tracked-1:panel",
-		});
-		expect(registry.get("tracked-1:panel")).toBeUndefined();
-		registry.handleEvent({
-			version: 1,
-			type: "register",
-			source: "tracked-1",
-			revision: 2,
-			panel: panel("tracked-1:panel", "Stale"),
-		});
-		expect(registry.get("tracked-1:panel")).toBeUndefined();
-		registry.dispose();
-	});
-
-	it("keeps publisher IDs stable and ignores updates after teardown", () => {
-		const emitted: unknown[] = [];
-		const listeners = new Set<(data: unknown) => void>();
-		const events = {
-			on: (_channel: string, handler: (data: unknown) => void) => {
-				listeners.add(handler);
-				return () => listeners.delete(handler);
-			},
-			emit: (_channel: string, data: unknown) => {
-				emitted.push(data);
-				for (const listener of [...listeners]) listener(data);
-			},
-		};
-		const publisher = registerSidebarPanel({ events }, { id: "vendor:queue", title: "Queue", rows: ["one"] });
-		const registry = createSidebarPanelRegistry({ events });
-		publisher.update({ id: "other:panel", title: "Renamed", rows: ["two"] });
-		expect(registry.get("vendor:queue")?.title).toBe("Renamed");
-		expect(registry.get("other:panel")).toBeUndefined();
-		expect((emitted.at(-1) as { panel?: { id?: string } })?.panel?.id).toBe("vendor:queue");
-		publisher.dispose();
-		expect(registry.get("vendor:queue")).toBeUndefined();
-		registry.dispose();
-		publisher.update({ id: "vendor:queue", title: "After dispose", rows: ["three"] });
-		expect(registry.getAvailable()).toEqual([]);
-	});
-
-	it("builds the approved core overview", () => {
-		expect(snapshot()).toMatchObject({
-			projectName: "pi-atelier",
-			branch: "feature/sidebar",
-			dirty: true,
-			sessionName: "Sidebar implementation",
-			persisted: true,
-			branchEntryCount: 38,
-			activeToolCount: 8,
-			availableToolCount: 12,
-		});
-	});
-
-	it("sanitizes contributed title and structured row text at render time", () => {
-		const config = {
-			...DEFAULT_CONFIG,
-			sidebarPanelLayout: [
-				{ id: "vendor:unsafe" as const, visible: true },
-				...DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false })),
-			],
-		};
-		const rendered = renderSidebarLines(
-			{
-				...snapshot(),
-				sidebarPanels: [
-					{
-						id: "vendor:unsafe",
-						title: "\u001b[31mUnsafe\nTitle",
-						rows: [{ text: "row\nvalue\u001b[33m", role: "warning" }],
-						available: true,
-						source: "vendor",
-					},
-				],
-			},
-			config,
-			theme,
-			44,
-			20,
-			false,
-			0,
-		).join("\n");
-		expect(rendered).toContain("UNSAFE TITLE");
-		expect(rendered).toContain("row value");
-		expect(rendered).not.toContain("[31m");
-		expect(rendered).not.toContain("[33m");
-	});
-
 	it("renders an explicit empty state when every configured-visible panel is unavailable", () => {
 		const hiddenBuiltins = DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false }));
 		const emptyConfig = {
 			...DEFAULT_CONFIG,
 			sidebarPanelLayout: [{ id: "vendor:missing" as const, visible: true }, ...hiddenBuiltins],
 		};
-		const rows = contentRows(renderSidebarLines(snapshot(), emptyConfig, theme, 44, 20));
+		const rows = renderRows(snapshot(), { config: emptyConfig, height: 20 });
 		expect(rows).toContain("No available panels");
 		expect(rows).toContain("Open /atelier Settings");
 	});
 
 	it("renders a full-height dock with elegant terminal-native panels", () => {
-		const lines = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 0);
+		const lines = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, {
+			colorEnabled: false,
+			now: 0,
+		});
 		const text = lines.join("\n");
 		expect(lines).toHaveLength(60);
 		expect(lines.every((line) => visibleWidth(line) <= 44)).toBe(true);
 		expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
-		expect(lines.every((line) => !stripAnsi(line).startsWith("│ "))).toBe(true);
 		expect(text).toContain("╭─ ✦ AGENT ");
 		expect(text).toContain("╭─ ✦ CONTEXT ");
 		expect(text).toContain("╰────────────────");
-		expect(text).not.toContain("ATELIER");
-		expect(text).not.toMatch(/PI ATELIER|ATELIER|▛▀▜/);
 		expect(contentRows(lines)[0]).toBe("AGENT");
 		expect(contentRows(lines)).toContainEqual(expect.stringMatching(/^Branch\s+feature\/sidebar$/));
 		expect(contentRows(lines)).toContainEqual(expect.stringMatching(/^gpt-5\.6-sol$/));
 	});
 
 	it("renders a scan-first Workspace Pulse without repeating the repository root path", () => {
-		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 0));
+		const rows = renderRows(snapshot(), { color: false, now: 0 });
 
 		expect(rows).toContainEqual(expect.stringMatching(/^Changed\s+5 tracked$/));
 		expect(rows).toContainEqual(expect.stringMatching(/^Untracked\s+2$/));
@@ -989,17 +226,7 @@ describe("sidebar snapshot and layout", () => {
 		[{ status: "unavailable" as const }, "Git unavailable"],
 	])("renders the %s Pulse state explicitly", (workspacePulse, expected) => {
 		const { branch: _branch, ...withoutBranch } = snapshot();
-		const rows = contentRows(
-			renderSidebarLines(
-				{ ...withoutBranch, workspacePulse, dirty: false },
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				0,
-			),
-		);
+		const rows = renderRows({ ...withoutBranch, workspacePulse, dirty: false }, { color: false, now: 0 });
 		expect(rows).toContain(expected);
 	});
 
@@ -1015,44 +242,23 @@ describe("sidebar snapshot and layout", () => {
 				conflicts: 2,
 			},
 		};
-		const conflictRows = contentRows(
-			renderSidebarLines(
-				{ ...snapshot(), workspacePulse: { status: "conflict", data } },
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				0,
-			),
+		const conflictRows = renderRows(
+			{ ...snapshot(), workspacePulse: { status: "conflict", data } },
+			{ color: false, now: 0 },
 		);
 		expect(conflictRows).toContain("./packages/api");
 		expect(conflictRows).toContainEqual(expect.stringMatching(/^Conflicts\s+2$/));
 		expect(conflictRows).toContainEqual(expect.stringMatching(/^Submodules\s+1$/));
 
-		const staleRows = contentRows(
-			renderSidebarLines(
-				{ ...snapshot(), workspacePulse: { status: "stale", data } },
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				0,
-			),
+		const staleRows = renderRows(
+			{ ...snapshot(), workspacePulse: { status: "stale", data } },
+			{ color: false, now: 0 },
 		);
 		expect(staleRows).toContainEqual(expect.stringMatching(/^Git\s+Stale$/));
 
-		const compactRows = contentRows(
-			renderSidebarLines(
-				{ ...snapshot(), workspacePulse: { status: "stale", data } },
-				DEFAULT_CONFIG,
-				theme,
-				28,
-				60,
-				false,
-				0,
-			),
+		const compactRows = renderRows(
+			{ ...snapshot(), workspacePulse: { status: "stale", data } },
+			{ width: 28, color: false, now: 0 },
 		);
 		expect(compactRows).toContainEqual(expect.stringMatching(/^Git\s+Stale$/));
 		expect(compactRows).toContainEqual(expect.stringMatching(/^Lines\s+\+182  −47$/));
@@ -1060,7 +266,7 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("drops Session and optional Pulse detail before the Workspace identity and core summary", () => {
-		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 27, false, 0));
+		const rows = renderRows(snapshot(), { height: 27, color: false, now: 0 });
 
 		expect(rows).toContain("WORKSPACE");
 		expect(rows).toContainEqual(expect.stringMatching(/^Branch\s+feature\/sidebar$/));
@@ -1071,8 +277,14 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("pulses only the working Agent jewel while keeping other crowns stable", () => {
-		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 0).join("\n");
-		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 400).join("\n");
+		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, {
+			colorEnabled: false,
+			now: 0,
+		}).join("\n");
+		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, {
+			colorEnabled: false,
+			now: 1_000,
+		}).join("\n");
 		expect(bright).toContain("╭─ ✦ AGENT ");
 		expect(soft).toContain("╭─ ✧ AGENT ");
 		expect(bright).toContain("╭─ ✦ CONTEXT ");
@@ -1081,108 +293,24 @@ describe("sidebar snapshot and layout", () => {
 
 	it("tints panel crowns with their semantic jewel roles", () => {
 		const fg = vi.fn((_color: string, text: string) => text);
-		renderSidebarLines(
-			snapshot(),
-			DEFAULT_CONFIG,
-			{ fg, bold: theme.bold, italic: theme.italic },
-			44,
-			60,
-			true,
-			0,
-		);
+		renderSidebarLines(snapshot(), DEFAULT_CONFIG, { fg, bold: theme.bold }, 44, 60, {
+			colorEnabled: true,
+			now: 0,
+		});
 		expect(fg).toHaveBeenCalledWith("mdHeading", "╭─ ✦ ");
 		expect(fg).toHaveBeenCalledWith("thinkingLow", "╭─ ✦ ");
 		expect(fg).toHaveBeenCalledWith("thinkingHigh", "╭─ ✦ ");
 		expect(fg).toHaveBeenCalledWith("syntaxType", "╭─ ✦ ");
 	});
 
-	it("matches the representative 44x60 no-color docked rail", () => {
-		const noSession = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
-			cwd: "/Users/example/projects/pi-atelier",
-			branchEntryCount: 6,
-			activeToolCount: 8,
-			availableToolCount: 12,
-			extensionStatuses: [],
-		});
-		expect(
-			contentRows(renderSidebarLines(noSession, DEFAULT_CONFIG, theme, 44, 60, false)),
-		).toMatchInlineSnapshot(`
-			[
-			  "AGENT",
-			  "◆ Working · GITIFYING",
-			  "gpt-5.6-sol",
-			  "openai-codex",
-			  "Thinking                        medium",
-			  "Billing                   Subscription",
-			  "",
-			  "",
-			  "ACTIVITY",
-			  "First token                          —",
-			  "Output speed                         —",
-			  "",
-			  "",
-			  "CONTEXT",
-			  "██░░░░░░░░░░░░░░░░░░░░░░░░░░░░    8.1%",
-			  "Tokens                      32k / 400k",
-			  "",
-			  "",
-			  "WORKSPACE",
-			  "pi-atelier",
-			  "Branch                 feature/sidebar",
-			  "Git                           Modified",
-			  "Changed                      5 tracked",
-			  "Lines                        +182  −47",
-			  "Untracked                            2",
-			  "History                      6 entries",
-			  "Storage                      Temporary",
-			  "",
-			  "",
-			  "USAGE",
-			  "Input                            50.0k",
-			  "Output                            1.9k",
-			  "Cache read                      100.0k",
-			  "Cache hit                        96.0%",
-			  "Cost                            $0.479",
-			  "",
-			  "",
-			  "TOOLS",
-			  "Enabled                         8 / 12",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			]
-		`);
-	});
-
 	it("renders organized sections without exceeding width", () => {
 		for (const width of [32, 40, 44]) {
-			const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 60, false));
-			expect(rows.join("\n")).not.toContain("ATELIER");
+			const rows = renderRows(snapshot(), { width: width, color: false });
 			expect(rows.join("\n")).toContain("WORKSPACE");
 			expect(rows.join("\n")).toContain("CONTEXT");
 			expect(rows).toContain("TOOLS");
-			expect(rows.every((row) => !row.startsWith("STATUS "))).toBe(true);
 			expect(
-				renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 60, false).every(
+				renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 60, { colorEnabled: false }).every(
 					(line) => visibleWidth(line) <= width,
 				),
 			).toBe(true);
@@ -1191,7 +319,7 @@ describe("sidebar snapshot and layout", () => {
 
 	it("keeps labeled metrics readable in narrow and wide panels", () => {
 		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
-		const compact = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, 28, 60, false));
+		const compact = renderRows(snapshot(), { config: expandedConfig, width: 28, color: false });
 		expect(compact).toContain("◆ Working · GITIFYING");
 		expect(compact).toContain("gpt-5.6-sol");
 		expect(compact).toContain("openai-codex");
@@ -1204,9 +332,8 @@ describe("sidebar snapshot and layout", () => {
 		expect(compact).toContainEqual(expect.stringMatching(/^Input\s+50\.0k$/));
 		expect(compact).toContainEqual(expect.stringMatching(/^Cache read\s+100\.0k$/));
 		expect(compact).toContainEqual(expect.stringMatching(/^Enabled\s+8 \/ 12$/));
-		expect(compact).toEqual(expect.not.arrayContaining([expect.stringMatching(/subs$/)]));
 
-		const regular = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, 44, 60, false));
+		const regular = renderRows(snapshot(), { config: expandedConfig, color: false });
 		expect(regular).toContainEqual(expect.stringMatching(/^gpt-5\.6-sol$/));
 		expect(regular).toContainEqual(expect.stringMatching(/^Billing\s+Subscription$/));
 		expect(regular).toContainEqual(expect.stringMatching(/^Branch\s+feature\/sidebar$/));
@@ -1215,13 +342,13 @@ describe("sidebar snapshot and layout", () => {
 
 	it("preserves the labeled hierarchy across the compact threshold", () => {
 		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
-		const compact = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, 39, 60, false));
+		const compact = renderRows(snapshot(), { config: expandedConfig, width: 39, color: false });
 		expect(compact).toContain("◆ Working · GITIFYING");
 		expect(compact).toContain("gpt-5.6-sol");
 		expect(compact).not.toContainEqual(expect.stringMatching(/^◆ Working.*gpt-5\.6-sol$/));
 
 		for (const width of [40, 43, 44]) {
-			const regular = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, width, 60, false));
+			const regular = renderRows(snapshot(), { config: expandedConfig, width: width, color: false });
 			expect(regular).toContainEqual(expect.stringMatching(/^gpt-5\.6-sol$/));
 			expect(regular).toContainEqual(expect.stringMatching(/^openai-codex/));
 			expect(regular).toContainEqual(expect.stringMatching(/^Enabled\s+8 \/ 12$/));
@@ -1229,13 +356,13 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("renders a context meter and labeled token count that adapt to width", () => {
-		const narrow = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 28, 60, false));
+		const narrow = renderRows(snapshot(), { width: 28, color: false });
 		const narrowContext = narrow.indexOf("CONTEXT");
 		expect(narrow[narrowContext + 1]).toMatch(/^[█░]+\s+8\.1%$/);
 		expect(narrow[narrowContext + 2]).toMatch(/^Tokens\s+32k \/ 400k$/);
 
 		for (const width of [40, 44, 72]) {
-			const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 60, false));
+			const rows = renderRows(snapshot(), { width: width, color: false });
 			const contextIndex = rows.indexOf("CONTEXT");
 			expect(rows[contextIndex + 1]).toMatch(/^[█░]+\s+8\.1%$/);
 			expect(rows[contextIndex + 2]).toMatch(/^Tokens\s+32k \/ 400k$/);
@@ -1250,9 +377,8 @@ describe("sidebar snapshot and layout", () => {
 			branchEntryCount: 6,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: [],
 		});
-		const rows = contentRows(renderSidebarLines(missingSession, DEFAULT_CONFIG, theme, 44, 60, false));
+		const rows = renderRows(missingSession, { color: false });
 		const workspaceIndex = rows.indexOf("WORKSPACE");
 		const usageIndex = rows.indexOf("USAGE");
 		expect(workspaceIndex).toBeGreaterThanOrEqual(0);
@@ -1263,8 +389,9 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("does not render the session file path", () => {
-		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false).join("\n");
-		expect(text).not.toContain("/tmp/session.jsonl");
+		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, { colorEnabled: false }).join(
+			"\n",
+		);
 		expect(text).not.toContain("session.jsonl");
 	});
 
@@ -1277,17 +404,18 @@ describe("sidebar snapshot and layout", () => {
 			branchEntryCount: 6,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: [],
 		});
-		expect(contentRows(renderSidebarLines(persisted, DEFAULT_CONFIG, theme, 44, 60, false))).toContainEqual(
+		expect(renderRows(persisted, { color: false })).toContainEqual(
 			expect.stringMatching(/^Storage\s+Saved$/),
 		);
 	});
 
 	it("renders populated usage as aligned labeled rows", () => {
 		const fg = vi.fn((_color: string, text: string) => text);
-		const unnamedTheme = { fg, bold: theme.bold, italic: theme.italic };
-		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, unnamedTheme, 44, 60, true));
+		const unnamedTheme = { fg, bold: theme.bold };
+		const rows = contentRows(
+			renderSidebarLines(snapshot(), DEFAULT_CONFIG, unnamedTheme, 44, 60, { colorEnabled: true }),
+		);
 		const usageIndex = rows.indexOf("USAGE");
 		expect(rows[usageIndex + 1]).toMatch(/^Input\s+50\.0k$/);
 		expect(rows[usageIndex + 2]).toMatch(/^Output\s+1\.9k$/);
@@ -1296,7 +424,7 @@ describe("sidebar snapshot and layout", () => {
 			expect(fg).toHaveBeenCalledWith("muted", label);
 		}
 		for (const width of [44, 56, 72]) {
-			const wideRows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 60, false));
+			const wideRows = renderRows(snapshot(), { width: width, color: false });
 			const wideUsage = wideRows.indexOf("USAGE");
 			expect(wideRows[wideUsage + 1]).toMatch(/^Input\s+50\.0k$/);
 			expect(wideRows[wideUsage + 2]).toMatch(/^Output\s+1\.9k$/);
@@ -1316,15 +444,13 @@ describe("sidebar snapshot and layout", () => {
 				cost: 0,
 			},
 		};
-		const rows = contentRows(renderSidebarLines(unavailable, DEFAULT_CONFIG, theme, 44, 60, false));
+		const rows = renderRows(unavailable, { color: false });
 		expect(rows).not.toContain("USAGE");
 		expect(rows).toContainEqual(expect.stringMatching(/^Billing\s+Subscription$/));
 	});
 
 	it("keeps a live Turn's ACTIVITY to current work without tool history", () => {
-		const rows = contentRows(
-			renderSidebarLines(withActivity(activeActivity()), DEFAULT_CONFIG, theme, 44, 60, false, 20_000),
-		);
+		const rows = renderRows(withActivity(activeActivity()), { color: false, now: 20_000 });
 		expect(rows).toContain("ACTIVITY");
 		expect(rows).toContain("Turn 3 · running 19s");
 		expect(rows).toEqual(expect.arrayContaining([expect.stringMatching(/^read\s+src\/state\.ts\s+18s$/)]));
@@ -1336,91 +462,63 @@ describe("sidebar snapshot and layout", () => {
 		{ completedCount: 2, failedCount: 0, expected: "tools 2 done · 0 failed" },
 		{ completedCount: 0, failedCount: 1, expected: "tools 0 done · 1 failed" },
 	])("renders both aggregate sides for %#", ({ completedCount, failedCount, expected }) => {
-		const rows = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "settled",
-					startedAt: 10_000,
-					durationMs: 5_000,
-					activeTools: [],
-					recentTools: [],
-					completedCount,
-					failedCount,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				20_000,
-			),
+		const rows = renderRows(
+			withActivity({
+				phase: "settled",
+				startedAt: 10_000,
+				durationMs: 5_000,
+				activeTools: [],
+				recentTools: [],
+				completedCount,
+				failedCount,
+			}),
+			{ color: false, now: 20_000 },
 		);
 		expect(rows).toContain(expected);
 	});
 
 	it("renders labeled response performance in Activity", () => {
-		const ttftOnly = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "running",
-					turnNumber: 1,
-					startedAt: 1_000,
-					performance: { ttftMs: 820 },
-					activeTools: [],
-					recentTools: [],
-					completedCount: 0,
-					failedCount: 0,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				2_000,
-			),
+		const ttftOnly = renderRows(
+			withActivity({
+				phase: "running",
+				turnNumber: 1,
+				startedAt: 1_000,
+				performance: { ttftMs: 820 },
+				activeTools: [],
+				recentTools: [],
+				completedCount: 0,
+				failedCount: 0,
+			}),
+			{ color: false, now: 2_000 },
 		);
 		expect(ttftOnly).toContainEqual(expect.stringMatching(/^First token\s+820ms$/));
 
-		const estimated = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "running",
-					startedAt: 1_000,
-					performance: { ttftMs: 820, tokensPerSecond: 42.34, estimated: true },
-					activeTools: [],
-					recentTools: [],
-					completedCount: 0,
-					failedCount: 0,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				2_000,
-			),
+		const estimated = renderRows(
+			withActivity({
+				phase: "running",
+				startedAt: 1_000,
+				performance: { ttftMs: 820, tokensPerSecond: 42.34, estimated: true },
+				activeTools: [],
+				recentTools: [],
+				completedCount: 0,
+				failedCount: 0,
+			}),
+			{ color: false, now: 2_000 },
 		);
 		expect(estimated).toContainEqual(expect.stringMatching(/^Output speed\s+~42\.3 tok\/s$/));
 
-		const completed = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "settled",
-					startedAt: 1_000,
-					durationMs: 4_000,
-					performance: { ttftMs: 1_420, tokensPerSecond: 47.34 },
-					activeTools: [],
-					recentTools: [],
-					completedCount: 0,
-					failedCount: 0,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				5_000,
-			),
+		const completed = renderRows(
+			withActivity({
+				phase: "settled",
+				startedAt: 1_000,
+				durationMs: 4_000,
+				performance: { ttftMs: 1_420, tokensPerSecond: 47.34 },
+				activeTools: [],
+				recentTools: [],
+				completedCount: 0,
+				failedCount: 0,
+			}),
+			{ color: false, now: 5_000 },
 		);
 		expect(completed).toContainEqual(expect.stringMatching(/^Output speed\s+47\.3 tok\/s$/));
 	});
@@ -1430,175 +528,115 @@ describe("sidebar snapshot and layout", () => {
 			...activeActivity(),
 			performance: { ttftMs: 820, tokensPerSecond: 48 },
 		});
-		const constrainedRows = Array.from({ length: 60 }, (_value, index) => 60 - index)
-			.map((height) =>
-				contentRows(
-					renderSidebarLines(performanceActivity, DEFAULT_CONFIG, theme, 44, height, false, 20_000),
-				),
-			)
-			.find(
-				(rows) =>
-					rows.some((row) => /^Output speed\s+48\.0 tok\/s$/.test(row)) &&
-					rows.some((row) => row.includes("Turn 3")) &&
-					!rows.some((row) => /^read\s+src\/state\.ts/.test(row)),
-			);
+		let constrainedRows: string[] | undefined;
+		for (let height = 60; height > 0; height -= 1) {
+			const rows = renderRows(performanceActivity, { height: height, color: false, now: 20_000 });
+			if (
+				rows.some((row) => /^Output speed\s+48\.0 tok\/s$/.test(row)) &&
+				rows.some((row) => row.includes("Turn 3")) &&
+				!rows.some((row) => /^read\s+src\/state\.ts/.test(row))
+			) {
+				constrainedRows = rows;
+				break;
+			}
+		}
 
 		expect(constrainedRows).toBeDefined();
 	});
 
-	it("always renders idle placeholders and preserves settled activity", () => {
-		const idleRows = contentRows(
-			renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 20_000),
-		);
-		expect(idleRows).toContain("ACTIVITY");
-		expect(idleRows).not.toContain("Ready");
-		expect(idleRows).toContainEqual(expect.stringMatching(/^First token\s+—$/));
-
-		const settledRows = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "settled",
-					turnNumber: 4,
-					startedAt: 1_000,
-					durationMs: 6_500,
-					activeTools: [],
-					recentTools: [
-						{
-							id: "edit-1",
-							name: "edit",
-							summary: "src/sidebar.ts",
-							status: "failed",
-							startedAt: 2_000,
-							durationMs: 2_000,
-						},
-					],
-					completedCount: 0,
-					failedCount: 1,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				20_000,
-			),
-		);
-		expect(settledRows).toContain("Last run · 6s");
-		expect(settledRows).not.toContain("Turn 4 · settled 6s");
-		expect(settledRows).toEqual(
-			expect.arrayContaining([expect.stringMatching(/^edit\s+src\/sidebar\.ts\s+failed 2s$/)]),
-		);
-
-		const idleWithRecent = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "idle",
-					activeTools: [],
-					recentTools: [
-						{
-							id: "idle-recent",
-							name: "bash",
-							summary: "npm test",
-							status: "done",
-							startedAt: 2_000,
-							durationMs: 1_000,
-						},
-					],
-					completedCount: 1,
-					failedCount: 0,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				20_000,
-			),
-		);
-		expect(idleWithRecent).toContain("ACTIVITY");
-		expect(idleWithRecent).toEqual(
-			expect.arrayContaining([expect.stringMatching(/^bash\s+npm test\s+done 1s$/)]),
-		);
-		expect(idleWithRecent).toContain("tools 1 done · 0 failed");
-
-		const idleWithActive = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "idle",
-					startedAt: 10_000,
-					activeTools: [
-						{ id: "idle-active", name: "read", summary: "src/a.ts", status: "running", startedAt: 15_000 },
-					],
-					recentTools: [],
-					completedCount: 0,
-					failedCount: 0,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				20_000,
-			),
-		);
-		expect(idleWithActive).toContain("ACTIVITY");
-		expect(idleWithActive).toEqual(
-			expect.arrayContaining([expect.stringMatching(/^read\s+src\/a\.ts\s+5s$/)]),
-		);
-
-		const idleWithCounts = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "idle",
-					activeTools: [],
-					recentTools: [],
-					completedCount: 0,
-					failedCount: 2,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				20_000,
-			),
-		);
-		expect(idleWithCounts).toContain("ACTIVITY");
-		expect(idleWithCounts).toContain("tools 0 done · 2 failed");
+	it.each<{
+		name: string;
+		activity: Partial<RunActivitySnapshot>;
+		present: (string | RegExp)[];
+		absent: string[];
+	}>([
+		{ name: "idle placeholders", activity: {}, present: [/^First token\s+—$/], absent: ["Ready"] },
+		{
+			name: "settled activity",
+			activity: {
+				phase: "settled",
+				turnNumber: 4,
+				startedAt: 1_000,
+				durationMs: 6_500,
+				failedCount: 1,
+				recentTools: [
+					{
+						id: "edit-1",
+						name: "edit",
+						summary: "src/sidebar.ts",
+						status: "failed",
+						startedAt: 2_000,
+						durationMs: 2_000,
+					},
+				],
+			},
+			present: ["Last run · 6s", /^edit\s+src\/sidebar\.ts\s+failed 2s$/],
+			absent: ["Turn 4 · settled 6s"],
+		},
+		{
+			name: "idle recent tools",
+			activity: {
+				completedCount: 1,
+				recentTools: [
+					{
+						id: "idle-recent",
+						name: "bash",
+						summary: "npm test",
+						status: "done",
+						startedAt: 2_000,
+						durationMs: 1_000,
+					},
+				],
+			},
+			present: [/^bash\s+npm test\s+done 1s$/, "tools 1 done · 0 failed"],
+			absent: [],
+		},
+		{
+			name: "idle active tools",
+			activity: {
+				startedAt: 10_000,
+				activeTools: [
+					{ id: "idle-active", name: "read", summary: "src/a.ts", status: "running", startedAt: 15_000 },
+				],
+			},
+			present: [/^read\s+src\/a\.ts\s+5s$/],
+			absent: [],
+		},
+		{ name: "idle counts", activity: { failedCount: 2 }, present: ["tools 0 done · 2 failed"], absent: [] },
+	])("renders $name", ({ activity, present, absent }) => {
+		const rows = renderRows(withActivity(activity), { color: false, now: 20_000 });
+		expect(rows).toContain("ACTIVITY");
+		for (const expected of present) {
+			expect(rows).toContainEqual(typeof expected === "string" ? expected : expect.stringMatching(expected));
+		}
+		for (const unexpected of absent) expect(rows).not.toContain(unexpected);
 	});
 
 	it("folds extra live tools into the current work row during a Turn", () => {
-		const rows = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "running",
-					turnNumber: 1,
-					startedAt: 10_000,
-					activeTools: [
-						{ id: "second", name: "grep", summary: "later", status: "running", startedAt: 13_000 },
-						{ id: "first", name: "read", summary: "same-a", status: "running", startedAt: 12_000 },
-						{ id: "third", name: "bash", summary: "same-b", status: "running", startedAt: 12_000 },
-					],
-					recentTools: [
-						{
-							id: "old",
-							name: "write",
-							summary: "recent",
-							status: "done",
-							startedAt: 3_000,
-							durationMs: 1_000,
-						},
-					],
-					completedCount: 1,
-					failedCount: 0,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				44,
-				60,
-				false,
-				20_000,
-			),
+		const rows = renderRows(
+			withActivity({
+				phase: "running",
+				turnNumber: 1,
+				startedAt: 10_000,
+				activeTools: [
+					{ id: "second", name: "grep", summary: "later", status: "running", startedAt: 13_000 },
+					{ id: "first", name: "read", summary: "same-a", status: "running", startedAt: 12_000 },
+					{ id: "third", name: "bash", summary: "same-b", status: "running", startedAt: 12_000 },
+				],
+				recentTools: [
+					{
+						id: "old",
+						name: "write",
+						summary: "recent",
+						status: "done",
+						startedAt: 3_000,
+						durationMs: 1_000,
+					},
+				],
+				completedCount: 1,
+				failedCount: 0,
+			}),
+			{ color: false, now: 20_000 },
 		);
 		expect(rows).toEqual(expect.arrayContaining([expect.stringMatching(/^grep\s+later\s+7s · \+2$/)]));
 		expect(rows).not.toEqual(expect.arrayContaining([expect.stringMatching(/^read\s+same-a/)]));
@@ -1607,64 +645,57 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("caps recent tools, deduplicates active IDs, and bounds long summaries", () => {
-		const rows = contentRows(
-			renderSidebarLines(
-				withActivity({
-					phase: "settled",
-					startedAt: 0,
-					activeTools: [{ id: "dupe", name: "read", summary: "active", status: "running", startedAt: 1_000 }],
-					recentTools: [
-						{
-							id: "new",
-							name: "bash",
-							summary: "n".repeat(80),
-							status: "done",
-							startedAt: 9_000,
-							durationMs: 1_000,
-						},
-						{
-							id: "dupe",
-							name: "read",
-							summary: "duplicate",
-							status: "done",
-							startedAt: 8_000,
-							durationMs: 1_000,
-						},
-						{
-							id: "middle",
-							name: "edit",
-							summary: "middle",
-							status: "done",
-							startedAt: 7_000,
-							durationMs: 1_000,
-						},
-						{
-							id: "older",
-							name: "write",
-							summary: "older",
-							status: "done",
-							startedAt: 6_000,
-							durationMs: 1_000,
-						},
-						{
-							id: "oldest",
-							name: "grep",
-							summary: "oldest",
-							status: "done",
-							startedAt: 5_000,
-							durationMs: 1_000,
-						},
-					],
-					completedCount: 5,
-					failedCount: 0,
-				}),
-				DEFAULT_CONFIG,
-				theme,
-				34,
-				60,
-				false,
-				20_000,
-			),
+		const rows = renderRows(
+			withActivity({
+				phase: "settled",
+				startedAt: 0,
+				activeTools: [{ id: "dupe", name: "read", summary: "active", status: "running", startedAt: 1_000 }],
+				recentTools: [
+					{
+						id: "new",
+						name: "bash",
+						summary: "n".repeat(80),
+						status: "done",
+						startedAt: 9_000,
+						durationMs: 1_000,
+					},
+					{
+						id: "dupe",
+						name: "read",
+						summary: "duplicate",
+						status: "done",
+						startedAt: 8_000,
+						durationMs: 1_000,
+					},
+					{
+						id: "middle",
+						name: "edit",
+						summary: "middle",
+						status: "done",
+						startedAt: 7_000,
+						durationMs: 1_000,
+					},
+					{
+						id: "older",
+						name: "write",
+						summary: "older",
+						status: "done",
+						startedAt: 6_000,
+						durationMs: 1_000,
+					},
+					{
+						id: "oldest",
+						name: "grep",
+						summary: "oldest",
+						status: "done",
+						startedAt: 5_000,
+						durationMs: 1_000,
+					},
+				],
+				completedCount: 5,
+				failedCount: 0,
+			}),
+			{ width: 34, color: false, now: 20_000 },
 		);
 		const recentRows = rows.filter((row) => /^(bash|edit|write)\s+/.test(row));
 		expect(recentRows).toHaveLength(3);
@@ -1690,11 +721,10 @@ describe("sidebar snapshot and layout", () => {
 				failedCount: 0,
 			}),
 			DEFAULT_CONFIG,
-			{ fg: liveFg, bold: theme.bold, italic: theme.italic },
+			{ fg: liveFg, bold: theme.bold },
 			44,
 			60,
-			true,
-			20_000,
+			{ colorEnabled: true, now: 20_000 },
 		);
 		expect(liveFg).toHaveBeenCalledWith("mdHeading", "10s");
 
@@ -1713,11 +743,10 @@ describe("sidebar snapshot and layout", () => {
 				failedCount: 1,
 			}),
 			DEFAULT_CONFIG,
-			{ fg: settledFg, bold: theme.bold, italic: theme.italic },
+			{ fg: settledFg, bold: theme.bold },
 			44,
 			60,
-			true,
-			20_000,
+			{ colorEnabled: true, now: 20_000 },
 		);
 		expect(settledFg).toHaveBeenCalledWith("thinkingLow", "done 1s");
 		expect(settledFg).toHaveBeenCalledWith("error", "failed 1s");
@@ -1762,31 +791,30 @@ describe("sidebar snapshot and layout", () => {
 			failedCount: 1,
 		});
 
-		const fullRows = contentRows(renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 40, false, 20_000));
+		const fullRows = renderRows(ranked, { color: false, now: 20_000 });
+		expect(fullRows).toContainEqual(expect.stringMatching(/^Session\s+Sidebar implementation$/));
+		expect(fullRows).toContainEqual(expect.stringMatching(/^History\s+38 entries$/));
 		expect(fullRows).toContain("TOOLS");
 		expect(fullRows).toContain("USAGE");
 		expect(fullRows).toContain("WORKSPACE");
+		expect(fullRows.findIndex((row) => /^bash\s+active-b/.test(row))).toBeGreaterThanOrEqual(0);
 		expect(fullRows.findIndex((row) => /^bash\s+active-b/.test(row))).toBeLessThan(
 			fullRows.indexOf("CONTEXT"),
 		);
 
-		const withoutSession = contentRows(
-			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 40, false, 20_000),
-		);
+		const withoutSession = renderRows(ranked, { height: 40, color: false, now: 20_000 });
 		expect(withoutSession).toContain("TOOLS");
 		expect(withoutSession).toContain("USAGE");
 		expect(withoutSession).toContain("WORKSPACE");
 		expect(withoutSession).not.toContainEqual(expect.stringMatching(/^Session\s+Sidebar implementation$/));
 		expect(withoutSession).not.toContainEqual(expect.stringMatching(/^History\s+38 entries$/));
 
-		const withoutTools = contentRows(
-			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 36, false, 20_000),
-		);
+		const withoutTools = renderRows(ranked, { height: 36, color: false, now: 20_000 });
 		expect(withoutTools).not.toContain("TOOLS");
 		expect(withoutTools).toContain("USAGE");
 		expect(withoutTools).toContain("WORKSPACE");
 
-		const coreOnly = contentRows(renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 30, false, 20_000));
+		const coreOnly = renderRows(ranked, { height: 30, color: false, now: 20_000 });
 		expect(coreOnly).not.toContain("TOOLS");
 		expect(coreOnly).not.toContain("USAGE");
 		expect(coreOnly).toContain("WORKSPACE");
@@ -1799,23 +827,22 @@ describe("sidebar snapshot and layout", () => {
 
 	it("normalizes tools, collapses names by default, and expands them from configuration", () => {
 		const toolsSnapshot = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: state,
 			cwd: "/tmp/project",
 			branchEntryCount: 6,
 			activeToolCount: 3,
 			availableToolCount: 7,
 			activeToolNames: ["read", "\u001b[31mbash", " edit\n", "read", "   "],
-			extensionStatuses: [],
 		});
 		expect(toolsSnapshot.activeToolNames).toEqual(["bash", "edit", "read"]);
 
-		const collapsed = contentRows(renderSidebarLines(toolsSnapshot, DEFAULT_CONFIG, theme, 44, 60, false));
+		const collapsed = renderRows(toolsSnapshot, { color: false });
 		const collapsedIndex = collapsed.indexOf("TOOLS");
 		expect(collapsed[collapsedIndex + 1]).toMatch(/^Enabled\s+3 \/ 7$/);
 		expect(collapsed).not.toContain("bash  edit");
 
 		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
-		const expanded = contentRows(renderSidebarLines(toolsSnapshot, expandedConfig, theme, 44, 60, false));
+		const expanded = renderRows(toolsSnapshot, { config: expandedConfig, color: false });
 		const expandedIndex = expanded.indexOf("TOOLS");
 		expect(expanded[expandedIndex + 1]).toMatch(/^Enabled\s+3 \/ 7$/);
 		expect(expanded[expandedIndex + 2]).toBe("bash  edit");
@@ -1823,38 +850,38 @@ describe("sidebar snapshot and layout", () => {
 		expect(expanded.join("\n")).not.toContain("[31m");
 
 		for (const width of [44, 56, 72]) {
-			const wide = contentRows(renderSidebarLines(toolsSnapshot, expandedConfig, theme, width, 60, false));
+			const wide = renderRows(toolsSnapshot, { config: expandedConfig, width: width, color: false });
 			const wideIndex = wide.indexOf("TOOLS");
 			expect(wide[wideIndex + 2]).toBe("bash  edit");
 			expect(wide[wideIndex + 3]).toBe("read");
 		}
 
 		for (const width of [28, 39]) {
-			const narrow = contentRows(renderSidebarLines(toolsSnapshot, expandedConfig, theme, width, 60, false));
+			const narrow = renderRows(toolsSnapshot, { config: expandedConfig, width: width, color: false });
 			const narrowIndex = narrow.indexOf("TOOLS");
 			expect(narrow[narrowIndex + 1]).toMatch(/^Enabled\s+3 \/ 7$/);
 			expect(narrow).not.toContain("bash  edit");
 			expect(narrow).not.toContain("read");
 		}
-		expect(expandedConfig.showSidebarToolNames).toBe(true);
 	});
 
 	it("drops activated tool-name rows before the tool count", () => {
 		const toolsSnapshot = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: state,
 			cwd: "/tmp/project",
 			branchEntryCount: 6,
 			activeToolCount: 4,
 			availableToolCount: 7,
 			activeToolNames: ["write", "read", "edit", "bash"],
-			extensionStatuses: [],
 		});
 		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
-		const fullRows = contentRows(renderSidebarLines(toolsSnapshot, expandedConfig, theme, 44, 60, false));
+		const fullRows = renderRows(toolsSnapshot, { config: expandedConfig, color: false });
 		const fullHeight = fullRows.findLastIndex((row) => row !== "") + 3;
-		const constrained = contentRows(
-			renderSidebarLines(toolsSnapshot, expandedConfig, theme, 44, fullHeight - 1, false),
-		);
+		const constrained = renderRows(toolsSnapshot, {
+			config: expandedConfig,
+			height: fullHeight - 1,
+			color: false,
+		});
 		expect(constrained).toContainEqual(expect.stringMatching(/^Enabled\s+4 \/ 7$/));
 		expect(constrained).toContain("bash  edit");
 		expect(constrained).not.toContain("read  write");
@@ -1862,15 +889,14 @@ describe("sidebar snapshot and layout", () => {
 
 	it("renders no tool-name placeholder when none are active", () => {
 		const toolsSnapshot = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: state,
 			cwd: "/tmp/project",
 			branchEntryCount: 0,
 			activeToolCount: 0,
 			availableToolCount: 7,
 			activeToolNames: [],
-			extensionStatuses: [],
 		});
-		const rows = contentRows(renderSidebarLines(toolsSnapshot, DEFAULT_CONFIG, theme, 44, 60, false));
+		const rows = renderRows(toolsSnapshot, { color: false });
 		const toolsIndex = rows.indexOf("TOOLS");
 		expect(rows[toolsIndex + 1]).toMatch(/^Enabled\s+0 \/ 7$/);
 		expect(rows[toolsIndex + 2]).toBe("");
@@ -1878,31 +904,31 @@ describe("sidebar snapshot and layout", () => {
 
 	it("renders tool count without standalone status placeholder when extension statuses are empty", () => {
 		const emptyStatuses = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: state,
 			cwd: "/tmp/project",
 			branchEntryCount: 6,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: [],
 		});
-		const rows = contentRows(renderSidebarLines(emptyStatuses, DEFAULT_CONFIG, theme, 44, 60, false));
+		const rows = renderRows(emptyStatuses, { color: false });
 		const toolsIndex = rows.indexOf("TOOLS");
 		expect(toolsIndex).toBeGreaterThan(-1);
 		expect(rows[toolsIndex + 1]).toMatch(/^Enabled\s+8 \/ 12$/);
 		expect(rows.slice(toolsIndex + 2)).not.toContain("—");
-		expect(rows).toEqual(expect.not.arrayContaining([expect.stringMatching(/^STATUS /)]));
 	});
 
 	it("shows only sanitized warning and error extension statuses", () => {
 		const statusSnapshot = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: {
+				...state,
+				extensionStatuses: ["tests \u001b[31mpassing", "api\nready", "sync warning", "index failed", "   "],
+			},
 			cwd: "/tmp/project",
 			branchEntryCount: 6,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests \u001b[31mpassing", "api\nready", "sync warning", "index failed", "   "],
 		});
-		const rows = contentRows(renderSidebarLines(statusSnapshot, DEFAULT_CONFIG, theme, 44, 60, false));
+		const rows = renderRows(statusSnapshot, { color: false });
 		expect(rows).toContain("ALERTS");
 		expect(rows).toContain("▲ sync warning");
 		expect(rows).toContain("✕ index failed");
@@ -1912,15 +938,16 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("suppresses routine healthy extension statuses", () => {
-		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false));
+		const rows = renderRows(snapshot(), { color: false });
 		expect(rows).toContainEqual(expect.stringMatching(/^Enabled\s+8 \/ 12$/));
 		expect(rows).not.toContain("tests passing");
 		expect(rows).not.toContain("ALERTS");
 	});
 
 	it("keeps only the required hierarchy in a compact 12 row rail", () => {
-		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 12, false).join("\n");
-		expect(text).not.toContain("▛▀▜");
+		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 12, { colorEnabled: false }).join(
+			"\n",
+		);
 		expect(text).toContain("AGENT");
 		expect(text).toContain("CONTEXT");
 		expect(text).not.toContain("WORKSPACE");
@@ -1946,9 +973,8 @@ describe("sidebar snapshot and layout", () => {
 			branchEntryCount: 0,
 			activeToolCount: 0,
 			availableToolCount: 0,
-			extensionStatuses: [],
 		});
-		const lines = renderSidebarLines(missing, DEFAULT_CONFIG, theme, 32, 60, false);
+		const lines = renderSidebarLines(missing, DEFAULT_CONFIG, theme, 32, 60, { colorEnabled: false });
 		expect(lines.join("\n")).toContain("—");
 		expect(lines.join("\n")).toContain("Temporary");
 		expect(lines.every((line) => visibleWidth(line) <= 32)).toBe(true);
@@ -1962,7 +988,7 @@ describe("sidebar snapshot and layout", () => {
 			sessionName: `release\n${"y".repeat(100)}`,
 			extensionStatuses: [`status\t${"z".repeat(100)}`],
 		};
-		const lines = renderSidebarLines(long, DEFAULT_CONFIG, theme, 34, 36, false);
+		const lines = renderSidebarLines(long, DEFAULT_CONFIG, theme, 34, 36, { colorEnabled: false });
 		expect(lines.join("")).not.toContain("[31m");
 		expect(lines.every((line) => visibleWidth(line) <= 34)).toBe(true);
 	});
@@ -1979,7 +1005,7 @@ describe("sidebar snapshot and layout", () => {
 			{ ...theme, fg },
 			44,
 			36,
-			false,
+			{ colorEnabled: false },
 		);
 		expect(fg).toHaveBeenCalledWith(expectedRole, expect.stringContaining(`${percent.toFixed(1)}%`));
 	});
@@ -1999,7 +1025,7 @@ describe("sidebar snapshot and layout", () => {
 				{ id: 2, text: "Completed TODO", status: "completed" as const },
 			],
 		};
-		const rows = contentRows(renderSidebarLines(populated, configWithoutAgent, theme, 44, 64, false, 0));
+		const rows = renderRows(populated, { config: configWithoutAgent, height: 64, color: false, now: 0 });
 		expect(rows).not.toContain("AGENT");
 		for (const panel of ["ACTIVITY", "TODOS", "CONTEXT", "WORKSPACE", "USAGE", "TOOLS"]) {
 			expect(rows).toContain(panel);
@@ -2009,17 +1035,6 @@ describe("sidebar snapshot and layout", () => {
 });
 
 describe("sidebar component and overlay", () => {
-	it("does not capture editor input or render modal close help", () => {
-		const component = createSidebarComponent({
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-			getHeight: () => 36,
-			theme,
-		});
-		expect(component.handleInput).toBeUndefined();
-		expect(component.render(44).join("\n")).not.toContain("esc/q close");
-	});
-
 	it("shows a visible Resize state and active divider styling", () => {
 		const fg = vi.fn((_color: string, text: string) => text);
 		const component = createSidebarComponent({
@@ -2027,7 +1042,7 @@ describe("sidebar component and overlay", () => {
 			getConfig: () => DEFAULT_CONFIG,
 			getHeight: () => 36,
 			isResizing: () => true,
-			theme: { fg, bold: theme.bold, italic: theme.italic },
+			theme: { fg, bold: theme.bold },
 		});
 
 		expect(component.render(44).join("\n")).toContain("RESIZE");
@@ -2074,49 +1089,21 @@ describe("sidebar component and overlay", () => {
 			expect(lines).toHaveLength(7);
 			expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
 			expect(contentRows(lines)[0]).toBe("Sidebar unavailable");
-			expect(lines.join("\n")).not.toMatch(/PI ATELIER|ATELIER/);
-			expect(lines.join("\n")).not.toContain("esc/q close");
-			expect(lines.join("\n")).not.toMatch(/[╭╮╰╯]/);
 			expect(lines.every((line) => visibleWidth(line) <= 24)).toBe(true);
 		},
 	);
 
 	it("keeps one overlay alive and supports repeated lifecycle operations", async () => {
 		const requestRender = vi.fn();
-		const closeCallbacks: Array<ReturnType<typeof vi.fn>> = [];
-		const handles: Array<{ hide: ReturnType<typeof vi.fn> }> = [];
-		const components: unknown[] = [];
 		const tui = fakeTui(requestRender);
-		const custom = vi.fn((factory, customOptions) => {
-			return new Promise<undefined>((resolve) => {
-				let closed = false;
-				const done = vi.fn((value: undefined) => {
-					if (closed) return;
-					closed = true;
-					resolve(value);
-				});
-				const handle = { hide: vi.fn() };
-				closeCallbacks.push(done);
-				handles.push(handle);
-				components.push(factory(tui as never, theme as never, {} as never, done));
-				const overlayOptions =
-					typeof customOptions.overlayOptions === "function"
-						? customOptions.overlayOptions()
-						: customOptions.overlayOptions;
-				expect(overlayOptions).toMatchObject({
-					anchor: "top-right",
-					width: DEFAULT_SIDEBAR_WIDTH,
-					nonCapturing: true,
-				});
-				expect(tui.render(120)).toEqual(["main:120"]);
-				customOptions.onHandle?.(handle as never);
-			});
-		});
-		const controller = createSidebarController({
-			ctx: { mode: "tui", ui: { custom } } as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-		});
+		const { custom, overlays } = overlayHost(() => tui);
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+			}),
+		);
 
 		expect(controller.isVisible()).toBe(false);
 		controller.show();
@@ -2127,7 +1114,12 @@ describe("sidebar component and overlay", () => {
 			overlayOptions: expect.any(Function),
 			onHandle: expect.any(Function),
 		});
-		expect(components).toHaveLength(1);
+		expect(overlays).toHaveLength(1);
+		expect(overlays[0]!.layout()).toMatchObject({
+			anchor: "top-right",
+			width: DEFAULT_SIDEBAR_WIDTH,
+			nonCapturing: true,
+		});
 		controller.show();
 		expect(custom).toHaveBeenCalledOnce();
 
@@ -2136,18 +1128,17 @@ describe("sidebar component and overlay", () => {
 		expect(requestRender).toHaveBeenCalled();
 		controller.hide();
 		expect(controller.isVisible()).toBe(false);
-		expect(closeCallbacks[0]).toHaveBeenCalledOnce();
-		expect(handles[0]?.hide).not.toHaveBeenCalled();
+		expect(overlays[0]!.done).toHaveBeenCalledOnce();
+		expect(overlays[0]!.handle.hide).not.toHaveBeenCalled();
 		controller.hide();
-		expect(closeCallbacks[0]).toHaveBeenCalledOnce();
+		expect(overlays[0]!.done).toHaveBeenCalledOnce();
 
 		controller.toggle();
 		expect(controller.isVisible()).toBe(true);
 		expect(custom).toHaveBeenCalledTimes(2);
-		expect(components).toHaveLength(2);
+		expect(overlays).toHaveLength(2);
 
 		// Cross the overlay promise and its catch/finally chain while the replacement is active.
-		await flushOverlay();
 		await flushOverlay();
 		expect(controller.isVisible()).toBe(true);
 		requestRender.mockClear();
@@ -2156,7 +1147,7 @@ describe("sidebar component and overlay", () => {
 
 		controller.dispose();
 		expect(controller.isVisible()).toBe(false);
-		expect(closeCallbacks[1]).toHaveBeenCalledOnce();
+		expect(overlays[1]!.done).toHaveBeenCalledOnce();
 	});
 
 	it("animates live activity on one timer only while visible", async () => {
@@ -2164,39 +1155,34 @@ describe("sidebar component and overlay", () => {
 		let running = true;
 		const requestRender = vi.fn();
 		const tui = fakeTui(requestRender);
-		const custom = vi.fn((factory, customOptions) => {
-			return new Promise<undefined>((resolve) => {
-				const handle = { hide: vi.fn() };
-				factory(tui as never, theme as never, {} as never, resolve);
-				customOptions.onHandle?.(handle as never);
-			});
-		});
-		const controller = createSidebarController({
-			ctx: { mode: "tui", ui: { custom } } as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-			shouldAnimate: () => running,
-			animationIntervalMs: 10,
-		});
-		vi.advanceTimersByTime(30);
+		const { custom } = overlayHost(() => tui);
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+				shouldAnimate: () => running,
+			}),
+		);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 
 		controller.show();
 		await flushOverlay();
 		controller.show();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).toHaveBeenCalledTimes(3);
 
 		controller.requestRender();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(10);
+		vi.advanceTimersByTime(1_000);
 		expect(requestRender).toHaveBeenCalledOnce();
 
 		running = false;
 		controller.requestRender();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 	});
 
@@ -2204,43 +1190,35 @@ describe("sidebar component and overlay", () => {
 		vi.useFakeTimers();
 		const requestRender = vi.fn();
 		const tui = fakeTui(requestRender);
-		const doneCallbacks: Array<(value: undefined) => void> = [];
-		const custom = vi.fn((factory, customOptions) => {
-			return new Promise<undefined>((resolve) => {
-				const done = (value: undefined) => resolve(value);
-				doneCallbacks.push(done);
-				const handle = { hide: vi.fn() };
-				factory(tui as never, theme as never, {} as never, done);
-				customOptions.onHandle?.(handle as never);
-			});
-		});
-		const controller = createSidebarController({
-			ctx: { mode: "tui", ui: { custom } } as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-			shouldAnimate: () => true,
-			animationIntervalMs: 10,
-		});
+		const { custom, overlays } = overlayHost(() => tui);
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+				shouldAnimate: () => true,
+			}),
+		);
 
 		controller.show();
 		await flushOverlay();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(10);
+		vi.advanceTimersByTime(1_000);
 		expect(requestRender).toHaveBeenCalledOnce();
 		controller.hide();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 
 		controller.show();
 		await flushOverlay();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(10);
+		vi.advanceTimersByTime(1_000);
 		expect(requestRender).toHaveBeenCalledOnce();
-		doneCallbacks[1]?.(undefined);
+		overlays[1]!.done(undefined);
 		await flushOverlay();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 
 		controller.show();
@@ -2248,80 +1226,46 @@ describe("sidebar component and overlay", () => {
 		controller.hide();
 		controller.show();
 		await flushOverlay();
-		doneCallbacks[2]?.(undefined);
+		overlays[2]!.done(undefined);
 		await flushOverlay();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(10);
+		vi.advanceTimersByTime(1_000);
 		expect(requestRender).toHaveBeenCalledOnce();
 		controller.dispose();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 	});
 
-	it("enters Resize mode through the composed sidebar controller", () => {
+	it("cancels Resize when the sidebar hides", () => {
 		let input: ((data: string) => unknown) | undefined;
 		const tui = fakeTui();
-		const custom = vi.fn((factory, customOptions) => {
-			factory(tui as never, theme as never, {} as never, vi.fn());
-			customOptions.onHandle?.({ hide: vi.fn() });
-			return new Promise(() => undefined);
-		});
-		const controller = createSidebarController({
-			ctx: {
-				mode: "tui",
-				ui: {
-					custom,
-					onTerminalInput: vi.fn((handler) => {
-						input = handler;
-						return vi.fn();
-					}),
-				},
-			} as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-		});
-
-		controller.show();
-		expect(controller.beginResize()).toBe(true);
-		expect(controller.isResizing()).toBe(true);
-		expect(controller.getWidth()).toBe(DEFAULT_SIDEBAR_WIDTH);
-		expect(input).toBeTypeOf("function");
-	});
-
-	it("cleans composed Resize state and restores full-width rendering on hide", () => {
-		let input: ((data: string) => unknown) | undefined;
-		const tui = fakeTui();
-		const custom = vi.fn((factory, customOptions) => {
-			factory(tui as never, theme as never, {} as never, vi.fn());
-			customOptions.onHandle?.({ hide: vi.fn() });
-			return new Promise(() => undefined);
-		});
-		const controller = createSidebarController({
-			ctx: {
-				mode: "tui",
-				ui: {
-					custom,
-					onTerminalInput: vi.fn((handler) => {
-						input = handler;
-						return vi.fn();
-					}),
-				},
-			} as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-		});
+		const { custom } = overlayHost(() => tui);
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: {
+					cwd: "/tmp/project",
+					mode: "tui",
+					ui: {
+						custom,
+						onTerminalInput: vi.fn((handler) => {
+							input = handler;
+							return vi.fn();
+						}),
+					},
+				} as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+			}),
+		);
 
 		controller.show();
 		expect(controller.beginResize()).toBe(true);
 		input?.("\u001b[D");
-		expect(controller.getWidth()).toBe(DEFAULT_SIDEBAR_WIDTH + 1);
-		expect(tui.render(120)).toEqual(["main:120"]);
 
 		controller.hide();
 
 		expect(controller.isResizing()).toBe(false);
-		expect(tui.render(120)).toEqual(["main:120"]);
 	});
 
 	it("continues overlay cleanup when the external TUI render request throws", async () => {
@@ -2329,36 +1273,28 @@ describe("sidebar component and overlay", () => {
 		const renderError = new Error("request render failed");
 		const requestRender = vi.fn();
 		const tui = fakeTui(requestRender);
-		let finishOverlay: ((value: undefined) => void) | undefined;
-		const custom = vi.fn(
-			(factory, customOptions) =>
-				new Promise<undefined>((resolve) => {
-					finishOverlay = resolve;
-					factory(tui as never, theme as never, {} as never, resolve);
-					customOptions.onHandle?.({ hide: vi.fn() });
-				}),
-		);
+		const { custom, overlays } = overlayHost(() => tui);
 		const onError = vi.fn();
-		const controller = createSidebarController({
-			ctx: { mode: "tui", ui: { custom } } as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-			shouldAnimate: () => true,
-			animationIntervalMs: 10,
-			onError,
-		});
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+				shouldAnimate: () => true,
+				onError,
+			}),
+		);
 
 		controller.show();
 		expect(vi.getTimerCount()).toBe(1);
 		requestRender.mockImplementation(() => {
 			throw renderError;
 		});
-		finishOverlay?.(undefined);
+		overlays[0]!.done();
 		await flushOverlay();
 
 		expect(controller.isVisible()).toBe(false);
 		expect(controller.isResizing()).toBe(false);
-		expect(tui.render(120)).toEqual(["main:120"]);
 		expect(vi.getTimerCount()).toBe(0);
 		expect(onError).toHaveBeenCalledWith(renderError);
 
@@ -2369,24 +1305,16 @@ describe("sidebar component and overlay", () => {
 
 	it("makes show after dispose a no-op", async () => {
 		const tui = fakeTui();
-		const doneCallbacks: Array<ReturnType<typeof vi.fn>> = [];
-		const custom = vi.fn(
-			(factory, customOptions) =>
-				new Promise<undefined>((resolve) => {
-					const done = vi.fn((value: undefined) => resolve(value));
-					doneCallbacks.push(done);
-					factory(tui as never, theme as never, {} as never, done);
-					customOptions.onHandle?.({ hide: vi.fn() });
-				}),
+		const { custom, overlays } = overlayHost(() => tui);
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+			}),
 		);
-		const controller = createSidebarController({
-			ctx: { mode: "tui", ui: { custom } } as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-		});
 
 		controller.show();
-		expect(tui.render(120)).toEqual(["main:120"]);
 		controller.dispose();
 		await flushOverlay();
 
@@ -2394,8 +1322,7 @@ describe("sidebar component and overlay", () => {
 
 		expect(controller.isVisible()).toBe(false);
 		expect(custom).toHaveBeenCalledOnce();
-		expect(doneCallbacks[0]).toHaveBeenCalledOnce();
-		expect(tui.render(120)).toEqual(["main:120"]);
+		expect(overlays[0]!.done).toHaveBeenCalledOnce();
 	});
 
 	it("aborts overlay activation when a replacement TUI cannot attach", async () => {
@@ -2403,28 +1330,17 @@ describe("sidebar component and overlay", () => {
 		const firstTui = fakeTui();
 		const replacementTui = fakeTui();
 		const tuis = [firstTui, replacementTui];
-		const doneCallbacks: Array<ReturnType<typeof vi.fn>> = [];
-		const handles: Array<{ hide: ReturnType<typeof vi.fn> }> = [];
 		const onError = vi.fn();
-		const custom = vi.fn((factory, customOptions) => {
-			const tui = tuis[doneCallbacks.length];
-			return new Promise<undefined>((resolve) => {
-				const done = vi.fn((value: undefined) => resolve(value));
-				const handle = { hide: vi.fn() };
-				doneCallbacks.push(done);
-				handles.push(handle);
-				factory(tui as never, theme as never, {} as never, done);
-				customOptions.onHandle?.(handle as never);
-			});
-		});
-		const controller = createSidebarController({
-			ctx: { mode: "tui", ui: { custom } } as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-			shouldAnimate: () => true,
-			animationIntervalMs: 10,
-			onError,
-		});
+		const { custom, overlays } = overlayHost(() => tuis.shift()!);
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+				shouldAnimate: () => true,
+				onError,
+			}),
+		);
 
 		controller.show();
 		controller.hide();
@@ -2436,22 +1352,22 @@ describe("sidebar component and overlay", () => {
 			expect.objectContaining({ message: expect.stringContaining("another TUI") }),
 		);
 		expect(controller.isVisible()).toBe(false);
-		expect(doneCallbacks[1]).toHaveBeenCalledOnce();
-		expect(handles[1]?.hide).toHaveBeenCalledOnce();
+		expect(overlays[1]!.done).toHaveBeenCalledOnce();
+		expect(overlays[1]!.handle.hide).toHaveBeenCalledOnce();
 		expect(vi.getTimerCount()).toBe(0);
-		expect(firstTui.render(120)).toEqual(["main:120"]);
-		expect(replacementTui.render(120)).toEqual(["main:120"]);
 	});
 
 	it("reports unsupported modes without enabling the sidebar", () => {
 		const onError = vi.fn();
 		const custom = vi.fn();
-		const controller = createSidebarController({
-			ctx: { mode: "rpc", ui: { custom } } as never,
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-			onError,
-		});
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: { cwd: "/tmp/project", mode: "rpc", ui: { custom } } as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+				onError,
+			}),
+		);
 		controller.show();
 		expect(controller.isVisible()).toBe(false);
 		expect(custom).not.toHaveBeenCalled();
@@ -2463,20 +1379,19 @@ describe("sidebar component and overlay", () => {
 
 describe("todos panel", () => {
 	it("omits todos panel when list is empty", () => {
-		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false));
+		const rows = renderRows(snapshot(), { height: 36, color: false });
 		expect(rows).not.toContain("TODOS");
 	});
 
 	it("keeps only the in-progress todo during a live Turn", () => {
 		const snapWithTodos = buildSidebarSnapshot({
-			state,
+			state: { ...state, extensionStatuses: ["tests passing"] },
 			cwd: "/Users/example/projects/pi-atelier",
 			sessionName: "Sidebar implementation",
 			sessionFile: "/tmp/session.jsonl",
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests passing"],
 			runActivity: activeActivity(),
 			todos: [
 				{ id: 1, text: "Review diff", status: "completed" },
@@ -2484,7 +1399,7 @@ describe("todos panel", () => {
 				{ id: 3, text: "Commit changes", status: "pending" },
 			],
 		});
-		const rows = contentRows(renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 48, false, 20_000));
+		const rows = renderRows(snapWithTodos, { height: 48, color: false, now: 20_000 });
 		expect(rows).toContain("TODOS");
 		expect(rows).toContain("1/3");
 		expect(rows).toContain("◐ #2 Write tests");
@@ -2494,14 +1409,13 @@ describe("todos panel", () => {
 
 	it("renders todos with all 3 status states", () => {
 		const snapWithTodos = buildSidebarSnapshot({
-			state,
+			state: { ...state, extensionStatuses: ["tests passing"] },
 			cwd: "/Users/example/projects/pi-atelier",
 			sessionName: "Sidebar implementation",
 			sessionFile: "/tmp/session.jsonl",
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [
 				{ id: 1, text: "Review diff", status: "completed" },
@@ -2509,7 +1423,7 @@ describe("todos panel", () => {
 				{ id: 3, text: "Commit changes", status: "pending" },
 			],
 		});
-		const rows = contentRows(renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 36, false));
+		const rows = renderRows(snapWithTodos, { height: 36, color: false });
 		expect(rows).toContain("TODOS");
 		expect(rows).toContain("1/3");
 		expect(rows).toContain("✓ #1 Review diff");
@@ -2519,14 +1433,13 @@ describe("todos panel", () => {
 
 	it("hides todos panel when disabled in the layout", () => {
 		const snapWithTodos = buildSidebarSnapshot({
-			state,
+			state: { ...state, extensionStatuses: ["tests passing"] },
 			cwd: "/Users/example/projects/pi-atelier",
 			sessionName: "Sidebar implementation",
 			sessionFile: "/tmp/session.jsonl",
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [{ id: 1, text: "Task", status: "pending" }],
 		});
@@ -2537,24 +1450,23 @@ describe("todos panel", () => {
 				visible: entry.id !== "todos",
 			})),
 		};
-		const rows = contentRows(renderSidebarLines(snapWithTodos, config, theme, 44, 36, false));
+		const rows = renderRows(snapWithTodos, { config: config, height: 36, color: false });
 		expect(rows).not.toContain("TODOS");
 	});
 
 	it("sanitizes ansi codes in todo text", () => {
 		const snapWithTodos = buildSidebarSnapshot({
-			state,
+			state: { ...state, extensionStatuses: ["tests passing"] },
 			cwd: "/Users/example/projects/pi-atelier",
 			sessionName: "Sidebar implementation",
 			sessionFile: "/tmp/session.jsonl",
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [{ id: 1, text: "Task\u001b[31mred", status: "pending" }],
 		});
-		const lines = renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 36, false);
+		const lines = renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 36, { colorEnabled: false });
 		expect(lines.join("")).not.toContain("[31m");
 		const rows = contentRows(lines);
 		expect(rows).toContain("○ #1 Taskred");

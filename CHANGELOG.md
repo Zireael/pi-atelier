@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.13.0 — 2026-10-02
+
 - Strip OSC hyperlinks and other terminal control sequences from footer, sidebar, notification, and chart text; previously only color codes were removed, leaving link targets visible ([#83](https://github.com/michaelmjhhhh/pi-atelier/issues/83)).
 - Follow [no-color.org](https://no-color.org): only a non-empty `NO_COLOR` disables color, on every surface.
 - Show `—` for response timing that has not been measured yet; `~` now only marks an estimated output speed.

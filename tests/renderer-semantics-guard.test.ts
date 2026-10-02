@@ -47,7 +47,12 @@ interface SemanticsSnapshot {
 	snapshotFields: string[];
 	sectionKeys: string[];
 	requiredViewFields: string[];
+	/** Straight from the producer's declarations: the generated half. */
+	viewContractDeclared: Record<string, string[]>;
+	/** Generated minus acknowledged: the effective half. */
 	viewContract: Record<string, string[]>;
+	/** What consumers deliberately drop, and why. */
+	acknowledged: Record<string, string>;
 }
 
 const snapshot = JSON.parse(readFileSync(SNAPSHOT, "utf8")) as SemanticsSnapshot;
@@ -140,11 +145,47 @@ describe("renderer semantics guard: Atelier draws, it does not narrate", () => {
 		).toEqual([]);
 	});
 
+	it("keeps the acknowledgement ledger honest", () => {
+		// The ledger is the only hand-written part of the view contract, so it
+		// is the part that can rot. Both checks below are possible offline:
+		// every acknowledgement must point at something the generated shape
+		// declares, and none of them may still be offered to consumers.
+		expect(Object.keys(snapshot.acknowledged).length).toBeGreaterThan(0);
+
+		for (const [path, reason] of Object.entries(snapshot.acknowledged)) {
+			expect(reason.trim(), `${path} is acknowledged with no reason`).not.toBe("");
+			const [owner = "", ...rest] = path.split(".");
+			expect(
+				snapshot.viewContractDeclared[owner] ?? [],
+				`${path} is acknowledged, but the recorded producer shape does not declare it`,
+			).toContain(rest.join("."));
+		}
+
+		const stillOffered = Object.entries(snapshot.viewContract).flatMap(([owner, fields]) =>
+			fields
+				.filter((field) =>
+					Object.keys(snapshot.acknowledged).some(
+						(acknowledged) =>
+							acknowledged === `${owner}.${field}` || `${owner}.${field}`.startsWith(`${acknowledged}.`),
+					),
+				)
+				.map((field) => `${owner}.${field}`),
+		);
+		expect(stillOffered, "an acknowledged field is still offered to consumers").toEqual([]);
+	});
+
 	it("records which producer revision the vocabulary came from", () => {
 		// Not verifiable here — that is the point. It travels with the file so a
 		// reader can tell how old the contract is without running the bridge.
 		expect(snapshot.producer.path).toBe("magic-context/packages/plugin/src/shared/sidebar-view.ts");
 		expect(snapshot.producer.sha256).toMatch(/^[0-9a-f]{64}$/);
 		expect(Object.keys(snapshot.viewContract).length).toBeGreaterThan(0);
+		// The generated half must be a superset of the effective half, or the
+		// snapshot was hand-edited.
+		for (const [owner, fields] of Object.entries(snapshot.viewContract)) {
+			for (const field of fields) {
+				expect(snapshot.viewContractDeclared[owner] ?? []).toContain(field);
+			}
+		}
 	});
 });

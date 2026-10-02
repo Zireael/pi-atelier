@@ -158,6 +158,12 @@ copy is byte-identical to the module it came from.
 Glyphs are exempt here and banned in the bridge: drawing a `█`/`✓` is this
 layer's job, while delegating the drawing is the translator's.
 
+The same snapshot carries the view contract, generated from Magic Context's own
+declarations, plus the ledger of fields consumers deliberately drop and why.
+That ledger is the only hand-written part of it, so this repo checks it can
+still mean something: every acknowledgement must point at something the
+recorded shape declares, and none may still be offered to consumers.
+
 To refresh it after a producer change, run `npm run update:semantics` in
 `omp-sidepanel-bridge` from the monorepo root — it rewrites both copies.
 

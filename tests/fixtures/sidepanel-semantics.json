@@ -180,7 +180,78 @@
     "percentText",
     "valueText"
   ],
-  "viewContract": {
+  "viewContractDeclared": {
+    "SidebarTone": [
+      "accent",
+      "error",
+      "muted",
+      "success",
+      "text",
+      "warning"
+    ],
+    "SidebarViewRow": [
+      "bold",
+      "label",
+      "tone",
+      "value"
+    ],
+    "SidebarViewWarning": [
+      "text",
+      "tone"
+    ],
+    "SidebarPressureRow": [
+      "detail",
+      "primary",
+      "right",
+      "tone"
+    ],
+    "SidebarTokenLegendEntry": [
+      "color",
+      "key",
+      "label",
+      "percentText",
+      "valueText"
+    ],
+    "SidebarTokenSegment": [
+      "color",
+      "key",
+      "weight"
+    ],
+    "SidebarTokenBar": [
+      "legend",
+      "segments"
+    ],
+    "SidebarOverview": [
+      "hygiene",
+      "pressure",
+      "tokenBar"
+    ],
+    "SidebarRecompStatus": [
+      "bar",
+      "bar.barText",
+      "bar.percentText",
+      "message",
+      "note",
+      "rows",
+      "statusText",
+      "statusTone",
+      "verb"
+    ],
+    "SidebarSectionHeader": [
+      "status",
+      "status.text",
+      "status.tone",
+      "title"
+    ],
+    "SidebarSection": [
+      "header",
+      "recomp",
+      "rows"
+    ],
+    "SidebarCollapsedSummary": [
+      "recomp",
+      "rows"
+    ],
     "MagicContextSidebarView": [
       "collapsedSummary",
       "dreamer",
@@ -194,6 +265,22 @@
       "stats",
       "status",
       "warnings"
+    ]
+  },
+  "viewContract": {
+    "MagicContextSidebarView": [
+      "collapsedSummary",
+      "dreamer",
+      "historian",
+      "memory",
+      "overview",
+      "stats",
+      "status",
+      "warnings"
+    ],
+    "SidebarCollapsedSummary": [
+      "recomp",
+      "rows"
     ],
     "SidebarOverview": [
       "hygiene",
@@ -206,35 +293,8 @@
       "right",
       "tone"
     ],
-    "SidebarTokenBar": [
-      "legend",
-      "segments"
-    ],
-    "SidebarTokenSegment": [
-      "color",
-      "key",
-      "weight"
-    ],
-    "SidebarTokenLegendEntry": [
-      "color",
-      "key",
-      "label",
-      "percentText",
-      "valueText"
-    ],
-    "SidebarViewRow": [
-      "bold",
-      "label",
-      "tone",
-      "value"
-    ],
-    "SidebarViewWarning": [
-      "text",
-      "tone"
-    ],
     "SidebarRecompStatus": [
       "bar",
-      "bar.barText",
       "bar.percentText",
       "message",
       "note",
@@ -254,9 +314,21 @@
       "status.tone",
       "title"
     ],
-    "SidebarCollapsedSummary": [
-      "recomp",
-      "rows"
+    "SidebarTokenBar": [
+      "legend",
+      "segments"
+    ],
+    "SidebarTokenLegendEntry": [
+      "color",
+      "key",
+      "label",
+      "percentText",
+      "valueText"
+    ],
+    "SidebarTokenSegment": [
+      "color",
+      "key",
+      "weight"
     ],
     "SidebarTone": [
       "accent",
@@ -265,6 +337,20 @@
       "success",
       "text",
       "warning"
+    ],
+    "SidebarViewRow": [
+      "label",
+      "tone",
+      "value"
+    ],
+    "SidebarViewWarning": [
+      "text",
+      "tone"
     ]
+  },
+  "acknowledged": {
+    "MagicContextSidebarView.header": "the rich panel protocol has no header node — Atelier draws its own chrome, so the view's glyph/label/version are dropped rather than re-invented here. Recorded so the loss is a decision and not an oversight.",
+    "SidebarRecompStatus.bar.barText": "Atelier's progress node draws its own bar from current/total. The producer's text strip is a second bar for the same number, so it is dropped rather than drawn twice.",
+    "SidebarViewRow.bold": "Atelier's keyValue has no bold field. Faking it with ANSI does not survive cleanPanelText, so the flag is dropped and recorded as a known lossy projection."
   }
 }

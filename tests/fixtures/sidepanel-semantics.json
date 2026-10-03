@@ -171,6 +171,10 @@
     "Update ck-mc, or roll back by restoring ck-mc together with context.db and store.db from the same backup.",
     "Update or reinstall Magic Context, then retry."
   ],
+  "producerLiteralsAHostMayReuse": [
+    "Last run",
+    "Magic Context"
+  ],
   "producerGlyphs": [
     "█",
     "░",

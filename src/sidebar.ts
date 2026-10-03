@@ -185,10 +185,10 @@ function panelRows(
 		role,
 		`${crownFill}╮`,
 	)}`;
-	const body = rows.map(
-		(row) => `${palette.paint("dim", "│")} ${fitToWidth(row, innerWidth)} ${palette.paint("dim", "│")}`,
-	);
-	return [top, ...body, palette.paint("dim", `╰${"─".repeat(safeWidth - 2)}╯`), ""];
+	// The frame carries a quiet shade of the crown's hue so each panel reads as one object.
+	const edge = palette.paintTint(role, "│");
+	const body = rows.map((row) => `${edge} ${fitToWidth(row, innerWidth)} ${edge}`);
+	return [top, ...body, palette.paintTint(role, `╰${"─".repeat(safeWidth - 2)}╯`), ""];
 }
 
 /** Align names and values consistently across all built-in panels. */
@@ -198,11 +198,12 @@ function labeledRow(
 	width: number,
 	palette: AtelierPalette,
 	role: PaletteRole = "primary",
+	labelRole: PaletteRole = "muted",
 ): string {
 	const left = truncateToWidth(label, Math.min(LABEL_COLUMN_WIDTH, Math.max(0, width - 8)), "…");
 	const right = truncateToWidth(value, Math.max(0, width - visibleWidth(left) - 1), "…");
 	return truncateToWidth(
-		`${palette.paint("muted", left)}${" ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)))}${palette.paint(role, right)}`,
+		`${palette.paint(labelRole, left)}${" ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)))}${palette.paint(role, right)}`,
 		width,
 		"",
 	);
@@ -239,6 +240,9 @@ function agentRows(
 	];
 }
 
+/** nf-oct-git_branch, matching the footer's Git icon. */
+const BRANCH_ICON = "";
+
 const PULSE_STATUS_LABEL = {
 	clean: "Clean",
 	stale: "Stale",
@@ -263,16 +267,16 @@ function workspacePulseRows(
 	const clean = pulse.status === "clean";
 	const statusRole = pulse.status === "conflict" ? "error" : clean ? "muted" : "warning";
 	const core = [labeledRow("Git", PULSE_STATUS_LABEL[pulse.status], width, palette, statusRole)];
-	if (!clean)
-		core.push(
-			labeledRow("Changed", `${formatTokens(git.trackedFiles)} tracked`, width, palette),
-			labeledRow(
-				"Lines",
-				`+${formatTokens(git.linesAdded)}  −${formatTokens(git.linesRemoved)}`,
-				width,
-				palette,
-			),
-		);
+	if (!clean) {
+		const files = `${formatTokens(git.trackedFiles)} ${git.trackedFiles === 1 ? "file" : "files"}`;
+		const added = `+${formatTokens(git.linesAdded)}`;
+		const removed = `−${formatTokens(git.linesRemoved)}`;
+		const lines = `${palette.paint("chartGreen", added)}  ${palette.paint("error", removed)}`;
+		// One "4 files  +54  −20" row when it fits, otherwise files and lines on their own rows.
+		if (visibleWidth(`Changed ${files}  ${added}  ${removed}`) <= width)
+			core.push(labeledRow("Changed", `${files}  ${lines}`, width, palette));
+		else core.push(labeledRow("Changed", files, width, palette), labeledRow("Lines", lines, width, palette));
+	}
 	if (git.conflicts > 0)
 		core.push(labeledRow("Conflicts", formatTokens(git.conflicts), width, palette, "error"));
 	const details = (
@@ -287,6 +291,12 @@ function workspacePulseRows(
 	return { core, details };
 }
 
+/** Context rests in its own hue in the sidebar; the warning and danger roles stay shared. */
+function sidebarContextRole(percent: number | null, config: AtelierConfig): PaletteRole {
+	const role = contextRole(percent, config, "dim");
+	return role === "context" ? "cache" : role;
+}
+
 function contextRows(
 	snapshot: SidebarSnapshot,
 	config: AtelierConfig,
@@ -298,7 +308,7 @@ function contextRows(
 	if (metrics.contextTokens === null || metrics.contextPercent === null) {
 		return [palette.paint("dim", "Context unavailable")];
 	}
-	const role = contextRole(metrics.contextPercent, config, "dim");
+	const role = sidebarContextRole(metrics.contextPercent, config);
 	const percent = Math.max(0, metrics.contextPercent);
 	const percentText = `${percent.toFixed(1)}%`;
 	const percentWidth = Math.max(6, visibleWidth(percentText));
@@ -570,44 +580,96 @@ function toolStatusRole(status: ToolActivity["status"]): PaletteRole {
 	return "ready";
 }
 
+const TOOL_STATUS = {
+	running: { role: "working", glyph: "◐" },
+	done: { role: "ready", glyph: "✓" },
+	failed: { role: "error", glyph: "✗" },
+} as const satisfies Record<ToolActivity["status"], { role: PaletteRole; glyph: string }>;
+
+const MIN_TOOL_SUMMARY_COLUMNS = 6;
+
+/** Shared across rows so summaries line up in one column. */
+function toolNameWidth(tools: readonly ToolActivity[], contentWidth: number): number {
+	const widest = Math.max(4, ...tools.map((tool) => visibleWidth(tool.name || "tool")));
+	return Math.min(widest, 10, Math.max(0, contentWidth));
+}
+
 function toolActivityRow(
 	tool: ToolActivity,
 	contentWidth: number,
+	nameWidth: number,
 	palette: AtelierPalette,
 	now: number,
 	extraLive = 0,
 ): string {
-	const name = tool.name || "tool";
-	const duration = formatDuration(tool.durationMs ?? now - tool.startedAt);
-	const status =
-		tool.status !== "running"
-			? `${tool.status} ${duration}`
-			: extraLive > 0
-				? `${duration} · +${extraLive}`
-				: duration;
-	const nameWidth = Math.min(Math.max(visibleWidth(name), 4), 10, Math.max(0, contentWidth));
-	const summaryWidth = Math.max(0, contentWidth - nameWidth - visibleWidth(status) - 2);
-	const row = `${fitToWidth(palette.paint("muted", name), nameWidth)} ${fitToWidth(
-		palette.paint(tool.summary ? "primary" : "dim", tool.summary || PLACEHOLDER),
-		summaryWidth,
-	)} ${palette.paint(toolStatusRole(tool.status), status)}`;
+	const status = TOOL_STATUS[tool.status];
+	const live = tool.status === "running";
+	const elapsed = tool.durationMs ?? now - tool.startedAt;
+	// Successful tools under a second carry no timing worth reading; failures always keep theirs.
+	const duration = tool.status !== "done" || elapsed >= 1_000 ? formatDuration(elapsed) : "";
+	const trailing = live && extraLive > 0 ? `${duration} · +${extraLive}` : duration;
+	const trailingWidth = trailing ? visibleWidth(trailing) + 1 : 0;
+	// Glyph and trailing timing are kept whole. On narrow rows the name gives way
+	// first, then the summary is dropped rather than shown as a lone ellipsis.
+	const available = Math.max(0, contentWidth - trailingWidth - 2);
+	let fittedNameWidth = Math.min(
+		nameWidth,
+		Math.max(Math.min(4, available), available - MIN_TOOL_SUMMARY_COLUMNS - 1),
+	);
+	let summaryWidth = available - fittedNameWidth - 1;
+	if (summaryWidth < 3) {
+		fittedNameWidth = Math.min(nameWidth, available);
+		summaryWidth = 0;
+	}
+	const name = palette.paint(
+		"dim",
+		sanitizeInline(truncateToWidth(tool.name || "tool", fittedNameWidth, "…")),
+	);
+	const summary = tool.summary
+		? palette.paint(
+				tool.status === "done" ? "muted" : "primary",
+				sanitizeInline(truncateToWidth(tool.summary, summaryWidth, "…")),
+			)
+		: palette.paint("dim", PLACEHOLDER);
+	const row = [
+		palette.paint(status.role, status.glyph),
+		fittedNameWidth > 0 ? fitToWidth(name, fittedNameWidth) : "",
+		summaryWidth > 0 ? fitToWidth(summary, summaryWidth) : "",
+		trailing ? palette.paint(tool.status === "done" ? "dim" : status.role, trailing) : "",
+	]
+		.filter(Boolean)
+		.join(" ");
 	return truncateToWidth(row, contentWidth, "");
 }
 
 function runPhaseRole(activity: RunActivitySnapshot): PaletteRole {
 	if (activity.phase === "running") return "working";
-	return activity.failedCount > 0 ? "error" : "ready";
+	return activity.failedCount > 0 ? "error" : "chartGreen";
 }
 
-function runSummaryRow(activity: RunActivitySnapshot, palette: AtelierPalette, now: number): string {
+function runSummaryRow(
+	activity: RunActivitySnapshot,
+	width: number,
+	palette: AtelierPalette,
+	now: number,
+): string {
 	const role = runPhaseRole(activity);
-	if (activity.phase === "settled") {
-		const duration = formatDuration(activity.durationMs ?? now - (activity.startedAt ?? now));
-		return palette.paint(role, `Last run · ${duration}`);
-	}
-	const duration = formatDuration(now - (activity.startedAt ?? now));
-	const label = activity.turnNumber === undefined ? "Run" : `Turn ${activity.turnNumber}`;
-	return palette.paint(role, `${label} · ${activity.phase} ${duration}`);
+	const settled = activity.phase === "settled";
+	const label = settled
+		? "Last run"
+		: activity.turnNumber === undefined
+			? "Run"
+			: `Turn ${activity.turnNumber}`;
+	const duration = formatDuration(
+		settled ? (activity.durationMs ?? now - (activity.startedAt ?? now)) : now - (activity.startedAt ?? now),
+	);
+	return labeledRow(label, duration, width, palette, role, role);
+}
+
+function toolCountRow(activity: RunActivitySnapshot, width: number, palette: AtelierPalette): string {
+	const { completedCount, failedCount } = activity;
+	const value = failedCount > 0 ? `${completedCount} done · ${failedCount} failed` : `${completedCount} done`;
+	return labeledRow("Tools", value, width, palette, failedCount > 0 ? "error" : "muted");
 }
 
 function responsePerformanceRows(
@@ -664,6 +726,8 @@ interface SidebarGroup {
 	panel?: PanelChrome;
 	rows: string[];
 	dropRank: number;
+	/** Shown only once one of these groups has been dropped; a summary of rows still visible adds nothing. */
+	summarizes?: readonly string[];
 }
 
 function activityGroups(
@@ -683,21 +747,18 @@ function activityGroups(
 	const visibleActive = liveTurn ? sortedActive.slice(-1) : sortedActive;
 	const extraLive = sortedActive.length - visibleActive.length;
 	const recent = liveTurn ? [] : activity.recentTools.filter((tool) => !activeIds.has(tool.id)).slice(0, 3);
-	const aggregate =
-		liveTurn || (activity.completedCount === 0 && activity.failedCount === 0)
-			? []
-			: [
-					palette.paint(
-						activity.failedCount > 0 ? "error" : "ready",
-						`tools ${activity.completedCount} done · ${activity.failedCount} failed`,
-					),
-				];
+	const nameWidth = toolNameWidth([...visibleActive, ...recent], contentWidth);
+	const toolCount = activity.completedCount + activity.failedCount;
+	const aggregate = liveTurn || toolCount === 0 ? [] : [toolCountRow(activity, contentWidth, palette)];
+	// When every counted tool has its own row, the count only matters once a row is dropped for height.
+	const summarizes =
+		toolCount > recent.length ? undefined : recent.map((tool) => `activityRecent:${tool.id}`);
 	return [
 		{
 			name: "activityCore",
 			panel,
 			rows: [
-				...(activity.phase === "idle" ? [] : [runSummaryRow(activity, palette, now)]),
+				...(activity.phase === "idle" ? [] : [runSummaryRow(activity, contentWidth, palette, now)]),
 				...responsePerformanceRows(activity, contentWidth, palette),
 			],
 			dropRank: DROP_RANK.required,
@@ -705,17 +766,23 @@ function activityGroups(
 		...visibleActive.map((tool, index) => ({
 			name: `activityActive:${tool.id}`,
 			panel,
-			rows: [toolActivityRow(tool, contentWidth, palette, now, extraLive)],
+			rows: [toolActivityRow(tool, contentWidth, nameWidth, palette, now, extraLive)],
 			dropRank: DROP_RANK.activeTool + (visibleActive.length - index) / 100,
 		})),
 		...recent.map((tool, index) => ({
 			name: `activityRecent:${tool.id}`,
 			panel,
-			rows: [toolActivityRow(tool, contentWidth, palette, now)],
+			rows: [toolActivityRow(tool, contentWidth, nameWidth, palette, now)],
 			dropRank:
 				index === 0 ? DROP_RANK.latestRecentTool : DROP_RANK.olderRecentTool + (recent.length - index - 1),
 		})),
-		{ name: "activityAggregate", panel, rows: aggregate, dropRank: DROP_RANK.aggregate },
+		{
+			name: "activityAggregate",
+			panel,
+			rows: aggregate,
+			dropRank: DROP_RANK.aggregate,
+			...(summarizes ? { summarizes } : {}),
+		},
 	];
 }
 
@@ -731,13 +798,18 @@ function measureGroups(groups: readonly SidebarGroup[]): number {
 	return height;
 }
 
+function withoutRedundantSummaries(groups: readonly SidebarGroup[]): SidebarGroup[] {
+	const names = new Set(groups.map((group) => group.name));
+	return groups.filter((group) => !group.summarizes || group.summarizes.some((name) => !names.has(name)));
+}
+
 function composeGroups(groups: readonly SidebarGroup[], height: number): SidebarGroup[] {
 	let candidate = groups.filter((group) => group.rows.length > 0);
 	// Recount cheap row metadata after removal so newly adjacent groups share panel chrome.
 	// Painting happens only after selection, never for the discarded candidates.
-	while (measureGroups(candidate) > height) {
+	while (measureGroups(withoutRedundantSummaries(candidate)) > height) {
 		let drop: SidebarGroup | undefined;
-		for (const group of candidate) {
+		for (const group of withoutRedundantSummaries(candidate)) {
 			if (group.dropRank < (drop?.dropRank ?? DROP_RANK.required)) drop = group;
 		}
 		if (drop) {
@@ -754,12 +826,12 @@ function composeGroups(groups: readonly SidebarGroup[], height: number): Sidebar
 		].find(({ name, minimum }) =>
 			candidate.some((group) => group.name === name && group.rows.length > minimum),
 		);
-		if (!compact) return candidate;
+		if (!compact) break;
 		candidate = candidate.map((group) =>
 			group.name === compact.name ? { ...group, rows: group.rows.slice(0, -1) } : group,
 		);
 	}
-	return candidate;
+	return withoutRedundantSummaries(candidate);
 }
 
 function renderGroups(
@@ -859,7 +931,7 @@ export function renderSidebarLines(
 				panel: {
 					id: "context",
 					title: "CONTEXT",
-					role: contextRole(snapshot.metrics.contextPercent, config, "dim"),
+					role: sidebarContextRole(snapshot.metrics.contextPercent, config),
 				},
 				rows: contextRows(snapshot, config, panelWidth, palette, theme),
 				dropRank: DROP_RANK.required,
@@ -886,14 +958,12 @@ export function renderSidebarLines(
 					panel,
 					rows: [
 						theme.bold(valueRow(snapshot.projectName, palette, "primary")),
+						// The branch takes the full row so long names are not cut short by a label column.
 						...(snapshot.branch
 							? [
-									labeledRow(
-										"Branch",
-										sanitizeInline(snapshot.branch) || PLACEHOLDER,
-										panelWidth,
-										palette,
+									palette.paint(
 										"accent",
+										`${config.nerdFont ? BRANCH_ICON : "⎇"} ${sanitizeInline(snapshot.branch) || PLACEHOLDER}`,
 									),
 								]
 							: []),
@@ -918,7 +988,7 @@ export function renderSidebarLines(
 		usage: () => [
 			{
 				name: "usage",
-				panel: { id: "usage", title: "USAGE", role: "output" },
+				panel: { id: "usage", title: "USAGE", role: "chartGold" },
 				rows: usageRows(snapshot, config, panelWidth, palette),
 				dropRank: DROP_RANK.usage,
 			},
@@ -932,7 +1002,7 @@ export function renderSidebarLines(
 			},
 		],
 		tools: () => {
-			const panel = { id: "tools", title: "TOOLS", role: "cache" } as const;
+			const panel = { id: "tools", title: "TOOLS", role: "chartPink" } as const;
 			const showToolNames = config.showSidebarToolNames && safeWidth > COMPACT_SIDEBAR_MAX_WIDTH;
 			const nameRows = showToolNames ? activeToolNameRows(snapshot, panelWidth, palette) : [];
 			return [
@@ -1028,7 +1098,12 @@ function renderSidebarError(error: unknown, width: number, height: number, resiz
 	const safeWidth = Math.max(0, Math.trunc(width));
 	const safeHeight = Math.max(0, Math.trunc(height));
 	if (safeWidth <= 0 || safeHeight <= 0) return [];
-	const plain: AtelierPalette = { colorEnabled: false, paint: (_role, text) => text };
+	const plain: AtelierPalette = {
+		colorEnabled: false,
+		tinted: false,
+		paint: (_role, text) => text,
+		paintTint: (_role, text) => text,
+	};
 	return renderDock(["Sidebar unavailable", detail], safeWidth, safeHeight, plain, resizing);
 }
 

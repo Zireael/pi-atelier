@@ -209,14 +209,14 @@ describe("sidebar snapshot and layout", () => {
 		expect(text).toContain("╭─ ✦ CONTEXT ");
 		expect(text).toContain("╰────────────────");
 		expect(contentRows(lines)[0]).toBe("AGENT");
-		expect(contentRows(lines)).toContainEqual(expect.stringMatching(/^Branch\s+feature\/sidebar$/));
+		expect(contentRows(lines)).toContainEqual(expect.stringMatching(/^. feature\/sidebar$/u));
 		expect(contentRows(lines)).toContainEqual(expect.stringMatching(/^gpt-5\.6-sol$/));
 	});
 
 	it("renders a scan-first Workspace Pulse without repeating the repository root path", () => {
 		const rows = renderRows(snapshot(), { color: false, now: 0 });
 
-		expect(rows).toContainEqual(expect.stringMatching(/^Changed\s+5 tracked$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^Changed\s+5 files  \+182  −47$/));
 		expect(rows).toContainEqual(expect.stringMatching(/^Untracked\s+2$/));
 		expect(rows).not.toContain("/Users/example/projects/pi-atelier");
 		expect(rows).toContainEqual(expect.stringMatching(/^Session\s+Sidebar implementation$/));
@@ -230,7 +230,7 @@ describe("sidebar snapshot and layout", () => {
 	])("renders the %s Pulse state explicitly", (workspacePulse, expected) => {
 		const { branch: _branch, ...withoutBranch } = snapshot();
 		const rows = renderRows({ ...withoutBranch, workspacePulse, dirty: false }, { color: false, now: 0 });
-		expect(rows).toContain(expected);
+		expect(rows).toContainEqual(expect.stringMatching(expected));
 	});
 
 	it("keeps conflict and stale signals visible without expanding every Git category", () => {
@@ -272,8 +272,8 @@ describe("sidebar snapshot and layout", () => {
 		const rows = renderRows(snapshot(), { height: 27, color: false, now: 0 });
 
 		expect(rows).toContain("WORKSPACE");
-		expect(rows).toContainEqual(expect.stringMatching(/^Branch\s+feature\/sidebar$/));
-		expect(rows).toContainEqual(expect.stringMatching(/^Changed\s+5 tracked$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^. feature\/sidebar$/u));
+		expect(rows).toContainEqual(expect.stringMatching(/^Changed\s+5 files  \+182  −47$/));
 		expect(rows).not.toContainEqual(expect.stringMatching(/^Untracked\s+2$/));
 		expect(rows).not.toContainEqual(expect.stringMatching(/^Session\s+Sidebar implementation$/));
 		expect(rows).not.toContainEqual(expect.stringMatching(/^History\s+38 entries$/));
@@ -301,9 +301,10 @@ describe("sidebar snapshot and layout", () => {
 			now: 0,
 		});
 		expect(fg).toHaveBeenCalledWith("mdHeading", "╭─ ✦ ");
-		expect(fg).toHaveBeenCalledWith("thinkingLow", "╭─ ✦ ");
-		expect(fg).toHaveBeenCalledWith("thinkingHigh", "╭─ ✦ ");
+		expect(fg).toHaveBeenCalledWith("success", "╭─ ✦ ");
 		expect(fg).toHaveBeenCalledWith("syntaxType", "╭─ ✦ ");
+		expect(fg).toHaveBeenCalledWith("accent", "╭─ ✦ ");
+		expect(fg).toHaveBeenCalledWith("syntaxString", "╭─ ✦ ");
 	});
 
 	it("renders organized sections without exceeding width", () => {
@@ -331,7 +332,7 @@ describe("sidebar snapshot and layout", () => {
 		expect(compact[compactContext + 1]).toMatch(/^[█░]+\s+8\.1%$/);
 		expect(compact[compactContext + 2]).toMatch(/^Tokens\s+32k \/ 400k$/);
 		expect(compact).toContain("pi-atelier");
-		expect(compact).toContainEqual(expect.stringMatching(/^Branch\s+feature\/sidebar$/));
+		expect(compact).toContainEqual(expect.stringMatching(/^. feature\/sidebar$/u));
 		expect(compact).toContainEqual(expect.stringMatching(/^Input\s+50\.0k$/));
 		expect(compact).toContainEqual(expect.stringMatching(/^Cache read\s+100\.0k$/));
 		expect(compact).toContainEqual(expect.stringMatching(/^Enabled\s+8 \/ 12$/));
@@ -339,7 +340,7 @@ describe("sidebar snapshot and layout", () => {
 		const regular = renderRows(snapshot(), { config: expandedConfig, color: false });
 		expect(regular).toContainEqual(expect.stringMatching(/^gpt-5\.6-sol$/));
 		expect(regular).toContainEqual(expect.stringMatching(/^Billing\s+Subscription$/));
-		expect(regular).toContainEqual(expect.stringMatching(/^Branch\s+feature\/sidebar$/));
+		expect(regular).toContainEqual(expect.stringMatching(/^. feature\/sidebar$/u));
 		expect(regular).toContainEqual(expect.stringMatching(/^Enabled\s+8 \/ 12$/));
 	});
 
@@ -455,16 +456,16 @@ describe("sidebar snapshot and layout", () => {
 	it("keeps a live Turn's ACTIVITY to current work without tool history", () => {
 		const rows = renderRows(withActivity(activeActivity()), { color: false, now: 20_000 });
 		expect(rows).toContain("ACTIVITY");
-		expect(rows).toContain("Turn 3 · running 19s");
-		expect(rows).toEqual(expect.arrayContaining([expect.stringMatching(/^read\s+src\/state\.ts\s+18s$/)]));
-		expect(rows).not.toEqual(expect.arrayContaining([expect.stringMatching(/^bash\s+npm test\s+done 4s$/)]));
-		expect(rows).not.toContain("tools 2 done · 1 failed");
+		expect(rows).toContainEqual(expect.stringMatching(/^Turn 3\s+19s$/));
+		expect(rows).toEqual(expect.arrayContaining([expect.stringMatching(/^◐ read\s+src\/state\.ts\s+18s$/)]));
+		expect(rows).not.toEqual(expect.arrayContaining([expect.stringMatching(/^✓ bash\s+npm test/)]));
+		expect(rows).not.toContainEqual(expect.stringMatching(/^Tools\s/));
 	});
 
 	it.each([
-		{ completedCount: 2, failedCount: 0, expected: "tools 2 done · 0 failed" },
-		{ completedCount: 0, failedCount: 1, expected: "tools 0 done · 1 failed" },
-	])("renders both aggregate sides for %#", ({ completedCount, failedCount, expected }) => {
+		{ completedCount: 2, failedCount: 0, expected: /^Tools\s+2 done$/ },
+		{ completedCount: 0, failedCount: 1, expected: /^Tools\s+0 done · 1 failed$/ },
+	])("renders the tool count for %#", ({ completedCount, failedCount, expected }) => {
 		const rows = renderRows(
 			withActivity({
 				phase: "settled",
@@ -477,7 +478,7 @@ describe("sidebar snapshot and layout", () => {
 			}),
 			{ color: false, now: 20_000 },
 		);
-		expect(rows).toContain(expected);
+		expect(rows).toContainEqual(expect.stringMatching(expected));
 	});
 
 	it("renders labeled response performance in Activity", () => {
@@ -573,8 +574,8 @@ describe("sidebar snapshot and layout", () => {
 					},
 				],
 			},
-			present: ["Last run · 6s", /^edit\s+src\/sidebar\.ts\s+failed 2s$/],
-			absent: ["Turn 4 · settled 6s"],
+			present: [/^Last run\s+6s$/, /^✗ edit\s+src\/sidebar\.ts\s+2s$/],
+			absent: ["Turn 4"],
 		},
 		{
 			name: "idle recent tools",
@@ -591,7 +592,7 @@ describe("sidebar snapshot and layout", () => {
 					},
 				],
 			},
-			present: [/^bash\s+npm test\s+done 1s$/, "tools 1 done · 0 failed"],
+			present: [/^✓ bash\s+npm test\s+1s$/],
 			absent: [],
 		},
 		{
@@ -602,10 +603,15 @@ describe("sidebar snapshot and layout", () => {
 					{ id: "idle-active", name: "read", summary: "src/a.ts", status: "running", startedAt: 15_000 },
 				],
 			},
-			present: [/^read\s+src\/a\.ts\s+5s$/],
+			present: [/^◐ read\s+src\/a\.ts\s+5s$/],
 			absent: [],
 		},
-		{ name: "idle counts", activity: { failedCount: 2 }, present: ["tools 0 done · 2 failed"], absent: [] },
+		{
+			name: "idle counts",
+			activity: { failedCount: 2 },
+			present: [/^Tools\s+0 done · 2 failed$/],
+			absent: [],
+		},
 	])("renders $name", ({ activity, present, absent }) => {
 		const rows = renderRows(withActivity(activity), { color: false, now: 20_000 });
 		expect(rows).toContain("ACTIVITY");
@@ -641,10 +647,10 @@ describe("sidebar snapshot and layout", () => {
 			}),
 			{ color: false, now: 20_000 },
 		);
-		expect(rows).toEqual(expect.arrayContaining([expect.stringMatching(/^grep\s+later\s+7s · \+2$/)]));
-		expect(rows).not.toEqual(expect.arrayContaining([expect.stringMatching(/^read\s+same-a/)]));
-		expect(rows).not.toEqual(expect.arrayContaining([expect.stringMatching(/^bash\s+same-b/)]));
-		expect(rows.findIndex((row) => /^write\s+recent/.test(row))).toBe(-1);
+		expect(rows).toEqual(expect.arrayContaining([expect.stringMatching(/^◐ grep\s+later\s+7s · \+2$/)]));
+		expect(rows).not.toEqual(expect.arrayContaining([expect.stringMatching(/^◐ read\s+same-a/)]));
+		expect(rows).not.toEqual(expect.arrayContaining([expect.stringMatching(/^◐ bash\s+same-b/)]));
+		expect(rows.findIndex((row) => /write\s+recent/.test(row))).toBe(-1);
 	});
 
 	it("caps recent tools, deduplicates active IDs, and bounds long summaries", () => {
@@ -700,11 +706,11 @@ describe("sidebar snapshot and layout", () => {
 			}),
 			{ width: 34, color: false, now: 20_000 },
 		);
-		const recentRows = rows.filter((row) => /^(bash|edit|write)\s+/.test(row));
+		const recentRows = rows.filter((row) => /^✓ (bash|edit|write)\s+/.test(row));
 		expect(recentRows).toHaveLength(3);
-		expect(recentRows[0]).toMatch(/^bash\s+n+/);
-		expect(recentRows[1]).toMatch(/^edit\s+middle\s+done 1s$/);
-		expect(recentRows[2]).toMatch(/^write\s+older\s+done 1s$/);
+		expect(recentRows[0]).toMatch(/^✓ bash\s+n+…\s+1s$/);
+		expect(recentRows[1]).toMatch(/^✓ edit\s+middle\s+1s$/);
+		expect(recentRows[2]).toMatch(/^✓ write\s+older\s+1s$/);
 		expect(rows).not.toEqual(expect.arrayContaining([expect.stringContaining("duplicate")]));
 		expect(rows).not.toEqual(expect.arrayContaining([expect.stringContaining("oldest")]));
 		expect(rows.every((row) => visibleWidth(row) <= 32)).toBe(true);
@@ -751,8 +757,9 @@ describe("sidebar snapshot and layout", () => {
 			60,
 			{ colorEnabled: true, now: 20_000 },
 		);
-		expect(settledFg).toHaveBeenCalledWith("thinkingLow", "done 1s");
-		expect(settledFg).toHaveBeenCalledWith("error", "failed 1s");
+		expect(settledFg).toHaveBeenCalledWith("thinkingLow", "✓");
+		expect(settledFg).toHaveBeenCalledWith("error", "✗");
+		expect(settledFg).toHaveBeenCalledWith("error", "1s");
 	});
 
 	it("drops workspace details, tools, then usage as height contracts", () => {
@@ -800,8 +807,8 @@ describe("sidebar snapshot and layout", () => {
 		expect(fullRows).toContain("TOOLS");
 		expect(fullRows).toContain("USAGE");
 		expect(fullRows).toContain("WORKSPACE");
-		expect(fullRows.findIndex((row) => /^bash\s+active-b/.test(row))).toBeGreaterThanOrEqual(0);
-		expect(fullRows.findIndex((row) => /^bash\s+active-b/.test(row))).toBeLessThan(
+		expect(fullRows.findIndex((row) => /^◐ bash\s+active-b/.test(row))).toBeGreaterThanOrEqual(0);
+		expect(fullRows.findIndex((row) => /^◐ bash\s+active-b/.test(row))).toBeLessThan(
 			fullRows.indexOf("CONTEXT"),
 		);
 
@@ -821,7 +828,7 @@ describe("sidebar snapshot and layout", () => {
 		expect(coreOnly).not.toContain("TOOLS");
 		expect(coreOnly).not.toContain("USAGE");
 		expect(coreOnly).toContain("WORKSPACE");
-		expect(coreOnly).toContainEqual(expect.stringMatching(/^Changed\s+5 tracked$/));
+		expect(coreOnly).toContainEqual(expect.stringMatching(/^Changed\s+5 files  \+182  −47$/));
 		expect(coreOnly).not.toContainEqual(expect.stringMatching(/^Session\s+Sidebar implementation$/));
 		expect(coreOnly).not.toContainEqual(expect.stringMatching(/^History\s+38 entries$/));
 		expect(coreOnly).toContain("AGENT");

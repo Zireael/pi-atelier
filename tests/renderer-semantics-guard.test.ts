@@ -40,6 +40,8 @@ interface SemanticsSnapshot {
 	$comment: string;
 	producer: { path: string; sha256: string };
 	producerOwned: string[];
+	/** Producer words a host may legitimately reuse, each with a stated reason. */
+	producerLiteralsAHostMayReuse: string[];
 	producerGlyphs: string[];
 	contractEnum: string[];
 	nonDisplay: string[];
@@ -56,6 +58,8 @@ interface SemanticsSnapshot {
 }
 
 const snapshot = JSON.parse(readFileSync(SNAPSHOT, "utf8")) as SemanticsSnapshot;
+
+const reusable = new Set(snapshot.producerLiteralsAHostMayReuse ?? []);
 
 /**
  * Every string literal in the source, unquoted, including the static parts of
@@ -85,7 +89,10 @@ function stringLiterals(code: string): string[] {
 /** Producer-owned WORDS present in the source, trimmed on both sides. */
 function producerWordsAuthored(code: string): string[] {
 	const authored = new Set(stringLiterals(code).map((literal) => literal.trim()));
-	return snapshot.producerOwned.filter((literal) => authored.has(literal));
+	// A word the producer owns AND the host may reuse is not a violation: the
+	// shared contract records why, and `producerLiteralsAHostMayReuse` is that
+	// record. Both hosts really can own the same plain-English phrase.
+	return snapshot.producerOwned.filter((literal) => authored.has(literal) && !reusable.has(literal));
 }
 
 describe("renderer semantics guard: Atelier draws, it does not narrate", () => {
@@ -138,6 +145,11 @@ describe("renderer semantics guard: Atelier draws, it does not narrate", () => {
 			expect(new Set(values).size, `${name} has duplicates`).toBe(values.length);
 		}
 
+		// Deliberately NOT `producerLiteralsAHostMayReuse`: overlap with
+		// producerOwned is that list's entire meaning -- a word the producer
+		// owns that the host may also say. The lists below are words the
+		// producer never owns, so an overlap there really would be a
+		// contradiction.
 		const excused = [...snapshot.contractEnum, ...snapshot.nonDisplay, ...snapshot.hostOwned];
 		expect(
 			snapshot.producerOwned.filter((literal) => excused.includes(literal)),

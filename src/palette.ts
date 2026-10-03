@@ -14,7 +14,8 @@ export type PaletteRole =
 	| "warning"
 	| "error"
 	| "chartPink"
-	| "chartGreen";
+	| "chartGreen"
+	| "chartGold";
 
 export interface PaletteTheme {
 	readonly name?: string;
@@ -46,6 +47,7 @@ export const PALETTE_RGB: Record<PaletteRole, Rgb> = {
 	error: [255, 93, 115],
 	chartPink: [244, 114, 182],
 	chartGreen: [74, 222, 128],
+	chartGold: [234, 200, 110],
 };
 
 const UNNAMED_THEME: Record<PaletteRole, string> = {
@@ -65,6 +67,7 @@ const UNNAMED_THEME: Record<PaletteRole, string> = {
 	error: "error",
 	chartPink: "syntaxString",
 	chartGreen: "success",
+	chartGold: "syntaxFunction",
 };
 
 /** Without color, only structural roles keep their own theme key; the rest read as plain text. */
@@ -72,6 +75,8 @@ const NO_COLOR_ROLES: ReadonlySet<PaletteRole> = new Set(["accent", "muted", "di
 
 export interface AtelierPalette {
 	readonly colorEnabled: boolean;
+	/** Whether paintTint renders role shades rather than falling back to dim. */
+	readonly tinted: boolean;
 	paint(role: PaletteRole, text: string): string;
 	/**
 	 * Literal `#RRGGBB` true-color paint for contributed rich content
@@ -80,6 +85,17 @@ export interface AtelierPalette {
 	 * producer-supplied escape sequences.
 	 */
 	paintHex?(hex: string, text: string): string | undefined;
+	/** A subdued shade of a role for chrome (panel frames, meter tracks); dim without truecolor. */
+	paintTint(role: PaletteRole, text: string, strength?: number): string;
+}
+
+/** The neutral every tint fades toward; mid-grey so tints stay legible on dark and light backgrounds. */
+const TINT_BASE: Rgb = [92, 96, 102];
+
+function tintRgb(role: PaletteRole, strength = 0.4): Rgb {
+	const mix = (index: 0 | 1 | 2) =>
+		Math.round(TINT_BASE[index] + (PALETTE_RGB[role][index] - TINT_BASE[index]) * strength);
+	return [mix(0), mix(1), mix(2)];
 }
 
 export function paintRgb([red, green, blue]: Rgb, text: string): string {
@@ -89,8 +105,10 @@ export function paintRgb([red, green, blue]: Rgb, text: string): string {
 const HEX_COLOR = /^#([0-9a-fA-F]{2})([0-9a-fA-F]{2})([0-9a-fA-F]{2})$/;
 
 export function createPalette(theme: PaletteTheme, colorEnabled: boolean): AtelierPalette {
+	const tinted = colorEnabled && Boolean(theme.name);
 	return {
 		colorEnabled,
+		tinted,
 		paint(role, text) {
 			if (!colorEnabled) return theme.fg(NO_COLOR_ROLES.has(role) ? role : "text", text);
 			if (!theme.name) return theme.fg(UNNAMED_THEME[role], text);
@@ -108,6 +126,10 @@ export function createPalette(theme: PaletteTheme, colorEnabled: boolean): Ateli
 				],
 				text,
 			);
+		},
+		paintTint(role, text, strength) {
+			if (!tinted) return theme.fg("dim", text);
+			return paintRgb(tintRgb(role, strength), text);
 		},
 	};
 }

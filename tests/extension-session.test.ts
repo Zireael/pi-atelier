@@ -609,7 +609,7 @@ describe("extension session", () => {
 		await settleMicrotasks();
 		// Positive control: a published pulse does reach the sidebar.
 		expect(renderOverlayText(active)).toContain("stale-branch");
-		expect(renderOverlayText(active)).toContain("1 tracked");
+		expect(renderOverlayText(active)).toContain("1 file");
 		await active.dispatch("session_shutdown", { reason: "quit" }, active.ctx);
 		expect(active.overlays[0]?.done).toHaveBeenCalledOnce();
 
@@ -902,7 +902,7 @@ describe("extension session", () => {
 			expect(activeText).toContain("Replacement session");
 			expect(activeText).toContain("ACTIVITY");
 			expect(activeText).toContain("Turn 7");
-			expect(activeText).toContain("running");
+			expect(activeText).toContain("◐ bash");
 			expect(activeText).toContain("bash");
 			expect(activeText).toContain("npm run current");
 			expect(activeText).toContain("Working");
@@ -939,10 +939,10 @@ describe("extension session", () => {
 
 			expect(h.overlays[1]?.requestRender.mock.calls.length).toBeGreaterThan(activeRenderCount);
 			const settledText = renderOverlayText(h, 1, 44);
-			expect(settledText).toContain("Last run · <1s");
+			expect(settledText).toMatch(/Last run\s+<1s/);
 			expect(settledText).not.toContain("Turn 7");
 			expect(settledText).not.toContain("settled");
-			expect(settledText).toContain("done");
+			expect(settledText).toContain("✓ bash");
 			expect(settledText).toContain("Ready");
 			expect(settledText).not.toContain("stale.ts");
 		} finally {

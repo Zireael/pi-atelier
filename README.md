@@ -22,6 +22,9 @@ Install the extension:
 pi install npm:pi-atelier
 ```
 
+Atelier uses the core packages supplied by the running Pi host. Its npm peers are optional to prevent
+installing a second copy of Pi; Pi itself is still required and must be updated separately.
+
 Start Pi, then open the control center:
 
 ```text
@@ -41,9 +44,7 @@ Pi packages run with your system permissions. Review third-party source before i
 
 ### Terminal font
 
-Plain text mode works with a standard monospace font and preserves colors, metrics, and responsive layout. The default Nerd Font mode requires a Nerd Font selected in your terminal settings.
-
-See the [font setup guide and Plain text preview](https://github.com/michaelmjhhhh/pi-atelier/blob/main/docs/usage.md#terminal-font) for installation instructions and configuration details.
+Plain text mode works with a standard monospace font and preserves colors, metrics, and responsive layout. The default Nerd Font mode requires a Nerd Font, such as one from [nerdfonts.com](https://www.nerdfonts.com), selected in your terminal settings. Switch modes in **Settings → Font mode**.
 
 ## Features
 
@@ -57,17 +58,21 @@ No telemetry or external network requests. See [Privacy](#privacy).
 
 ## Use
 
-Open `/atelier` or press **F6** to change display settings, control the sidebar, select models and tools, rename the session, or compact it.
+Open `/atelier` or press **F6** to change display settings, control the sidebar, select models and tools, or view subagent usage.
 
 ```text
 /atelier display            # display settings
-/atelier sidebar            # toggle sidebar
-/atelier sidebar on|off     # set sidebar visibility
+/atelier usage              # subagent cost graph
+/atelier sidebar            # toggle sidebar visibility
+/atelier sidebar auto|manual # choose sidebar mode
+/atelier sidebar on|off      # show/hide without changing mode
 /atelier sidebar tools      # toggle tool names
 /atelier enable|disable     # set extension state
 ```
 
-The sidebar starts visible and hides when the terminal is too narrow. Press `Ctrl+Shift+R` to resize it. Its TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
+The sidebar starts in **Auto** mode: it collapses when space is tight and reopens when there is room. At the default width, it collapses below 124 terminal columns and reopens at 132. Auto disables manual width adjustment. Choose **Manual** to adjust a visible sidebar with `Ctrl+Shift+R`. Showing or hiding the sidebar is independent of its mode; a manually hidden sidebar stays hidden when the terminal grows. Its TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
+
+In Manual mode, the sidebar hides below 92 columns and returns at 92. Resize with the arrow keys or drag the divider; Enter or mouse release confirms, and Escape cancels. The preferred width survives terminal resizing and mode changes. Mode, width, and visibility are session-scoped; the startup visibility preference remains configurable in Settings. Hidden TODO results keep their full output.
 
 Choose a status rail preset in the display settings:
 
@@ -78,8 +83,6 @@ Choose a status rail preset in the display settings:
 | **classic** | Detailed telemetry |
 
 Pi supports one custom footer and one custom editor at a time. Extension load order determines which chrome is visible.
-
-See the [usage guide](https://github.com/michaelmjhhhh/pi-atelier/blob/main/docs/usage.md) for responsive layout, selection and copy, inline images, and disable/re-enable behavior.
 
 ## Configuration
 
@@ -113,6 +116,24 @@ Project settings override user settings. Session changes override both. Global f
 
 Use **Settings → Display** to reorder or hide status rail segments and sidebar panels. Undo restores the latest Display or Sidebar edit, including a Display Revert. Legacy user settings `showSidebarAgent` and `showSidebarTodos` remain supported when `sidebarPanelLayout` is absent.
 
+### Sidebar panels from other extensions
+
+Another extension can add a panel through Pi's event bus. `registerSidebarPanel` publishes it and answers discovery requests, so either extension may load first:
+
+```ts
+import { registerSidebarPanel } from "pi-atelier/extensions/index.ts";
+
+const panel = registerSidebarPanel(pi, {
+	id: "vendor:queue",
+	title: "Queue",
+	rows: ["2 queued", { text: "1 failed", role: "error" }],
+});
+panel.update({ id: "vendor:queue", title: "Queue", rows: ["idle"] });
+panel.dispose();
+```
+
+Panel IDs are namespaced (`vendor:name`). New panels start hidden; enable them in **Settings → Display**. Titles and rows are plain text: terminal sequences are stripped, and oversized payloads are rejected (see the exported `SIDEBAR_PANEL_MAX_*` limits). Extensions that cannot import the helper can emit the exported `SidebarPanelEvent` types on the `pi-atelier:sidebar-panels` channel directly.
+
 ## Troubleshooting
 
 - Shortcut unavailable: use `/atelier`, change `shortcut`, then run `/reload`. The default is `f6` on both macOS and Windows; keyboards with media keys may require Fn+F6 on either platform. Saved `alt+a` settings now resolve to `f6`; Alt+A is no longer registered. Other custom `shortcut` settings add an alternative binding alongside F6. Other extensions or terminal key mappings can still intercept F6.
@@ -137,7 +158,7 @@ Pi Atelier:
 ```bash
 git clone https://github.com/michaelmjhhhh/pi-atelier.git
 cd pi-atelier
-npm install
+npm ci
 npm run check
 ./node_modules/.bin/pi --no-session --no-extensions -e ./extensions/index.ts
 ```
@@ -170,6 +191,17 @@ To refresh it after a producer change, run `npm run update:semantics` in
 See [CONTRIBUTING.md](https://github.com/michaelmjhhhh/pi-atelier/blob/main/CONTRIBUTING.md).
 
 The command above opens a temporary session with only the checkout's extension loaded, avoiding conflicts with an installed copy.
+
+`npm run check` includes a dependency audit and a clean install of the packed extension, so it requires
+npm registry access. The install check verifies that Atelier adds no runtime dependencies and loads
+through the development Pi host. Run `npm run check:audit` or `npm run check:install` separately to
+investigate dependency warnings. Warnings from an existing Pi installation can also come from the
+host or other installed packages; Atelier's checks cover its own dependency trees.
+
+Development stays on Pi 0.84.0 to check the minimum supported API. A scoped npm override patches
+that host's pinned `undici` dependency to 8.10.2. Remove the override when the development baseline
+moves to a compatible Pi release with patched `undici`. Root overrides do not apply to consumers
+or update their Pi hosts.
 
 ## License
 

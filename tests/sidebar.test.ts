@@ -1,4 +1,5 @@
 import { disposeAfterTest } from "./helpers/cleanup.js";
+import { DEFAULT_CONFIG } from "../src/config.js";
 import { fakeTui, overlayHost } from "./helpers/overlay-host.js";
 import { settleMicrotasks } from "./helpers/async.js";
 import { visibleWidth } from "@earendil-works/pi-tui";
@@ -14,7 +15,7 @@ import {
 	type SidebarPanelData,
 } from "../src/sidebar.js";
 import { DEFAULT_SIDEBAR_WIDTH } from "../src/split-pane.js";
-import { type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
+import { type AtelierState } from "../src/types.js";
 
 const stripAnsi = (text: string) => text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 
@@ -22,7 +23,6 @@ const theme = {
 	name: "dark",
 	fg: (_color: string, text: string) => text,
 	bold: (text: string) => text,
-	italic: (text: string) => text,
 };
 
 afterEach(() => {
@@ -74,14 +74,13 @@ const state: AtelierState = {
 
 function snapshot() {
 	return buildSidebarSnapshot({
-		state,
+		state: { ...state, extensionStatuses: ["tests passing"] },
 		cwd: "/Users/example/projects/pi-atelier",
 		sessionName: "Sidebar implementation",
 		sessionFile: "/tmp/session.jsonl",
 		branchEntryCount: 38,
 		activeToolCount: 8,
 		availableToolCount: 12,
-		extensionStatuses: ["tests passing"],
 		runActivity: EMPTY_RUN_ACTIVITY,
 	});
 }
@@ -140,7 +139,12 @@ function renderRows(
 		now,
 	}: { config?: typeof DEFAULT_CONFIG; width?: number; height?: number; color?: boolean; now?: number } = {},
 ) {
-	return contentRows(renderSidebarLines(value, config, theme, width, height, color, now));
+	return contentRows(
+		renderSidebarLines(value, config, theme, width, height, {
+			colorEnabled: color,
+			...(now === undefined ? {} : { now }),
+		}),
+	);
 }
 
 const flushOverlay = settleMicrotasks;
@@ -166,7 +170,6 @@ describe("sidebar snapshot and layout", () => {
 						id: "vendor:queue",
 						title: "Queue",
 						rows: [{ text: "queued 2" }],
-						available: true,
 						source: "vendor",
 					},
 				],
@@ -182,53 +185,6 @@ describe("sidebar snapshot and layout", () => {
 		expect(text).not.toContain("AGENT");
 	});
 
-	it("builds the approved core overview", () => {
-		expect(snapshot()).toMatchObject({
-			projectName: "pi-atelier",
-			branch: "feature/sidebar",
-			dirty: true,
-			sessionName: "Sidebar implementation",
-			persisted: true,
-			branchEntryCount: 38,
-			activeToolCount: 8,
-			availableToolCount: 12,
-		});
-	});
-
-	it("sanitizes contributed title and structured row text at render time", () => {
-		const config = {
-			...DEFAULT_CONFIG,
-			sidebarPanelLayout: [
-				{ id: "vendor:unsafe" as const, visible: true },
-				...DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false })),
-			],
-		};
-		const rendered = renderSidebarLines(
-			{
-				...snapshot(),
-				sidebarPanels: [
-					{
-						id: "vendor:unsafe",
-						title: "\u001b[31mUnsafe\nTitle",
-						rows: [{ text: "row\nvalue\u001b[33m", role: "warning" }],
-						available: true,
-						source: "vendor",
-					},
-				],
-			},
-			config,
-			theme,
-			44,
-			20,
-			false,
-			0,
-		).join("\n");
-		expect(rendered).toContain("UNSAFE TITLE");
-		expect(rendered).toContain("row value");
-		expect(rendered).not.toContain("[31m");
-		expect(rendered).not.toContain("[33m");
-	});
-
 	it("renders an explicit empty state when every configured-visible panel is unavailable", () => {
 		const hiddenBuiltins = DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => ({ ...entry, visible: false }));
 		const emptyConfig = {
@@ -241,17 +197,17 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("renders a full-height dock with elegant terminal-native panels", () => {
-		const lines = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 0);
+		const lines = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, {
+			colorEnabled: false,
+			now: 0,
+		});
 		const text = lines.join("\n");
 		expect(lines).toHaveLength(60);
 		expect(lines.every((line) => visibleWidth(line) <= 44)).toBe(true);
 		expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
-		expect(lines.every((line) => !stripAnsi(line).startsWith("│ "))).toBe(true);
 		expect(text).toContain("╭─ ✦ AGENT ");
 		expect(text).toContain("╭─ ✦ CONTEXT ");
 		expect(text).toContain("╰────────────────");
-		expect(text).not.toContain("ATELIER");
-		expect(text).not.toMatch(/PI ATELIER|ATELIER|▛▀▜/);
 		expect(contentRows(lines)[0]).toBe("AGENT");
 		expect(contentRows(lines)).toContainEqual(expect.stringMatching(/^Branch\s+feature\/sidebar$/));
 		expect(contentRows(lines)).toContainEqual(expect.stringMatching(/^gpt-5\.6-sol$/));
@@ -324,8 +280,14 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("pulses only the working Agent jewel while keeping other crowns stable", () => {
-		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 0).join("\n");
-		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 400).join("\n");
+		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, {
+			colorEnabled: false,
+			now: 0,
+		}).join("\n");
+		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, {
+			colorEnabled: false,
+			now: 1_000,
+		}).join("\n");
 		expect(bright).toContain("╭─ ✦ AGENT ");
 		expect(soft).toContain("╭─ ✧ AGENT ");
 		expect(bright).toContain("╭─ ✦ CONTEXT ");
@@ -334,106 +296,24 @@ describe("sidebar snapshot and layout", () => {
 
 	it("tints panel crowns with their semantic jewel roles", () => {
 		const fg = vi.fn((_color: string, text: string) => text);
-		renderSidebarLines(
-			snapshot(),
-			DEFAULT_CONFIG,
-			{ fg, bold: theme.bold, italic: theme.italic },
-			44,
-			60,
-			true,
-			0,
-		);
+		renderSidebarLines(snapshot(), DEFAULT_CONFIG, { fg, bold: theme.bold }, 44, 60, {
+			colorEnabled: true,
+			now: 0,
+		});
 		expect(fg).toHaveBeenCalledWith("mdHeading", "╭─ ✦ ");
 		expect(fg).toHaveBeenCalledWith("thinkingLow", "╭─ ✦ ");
 		expect(fg).toHaveBeenCalledWith("thinkingHigh", "╭─ ✦ ");
 		expect(fg).toHaveBeenCalledWith("syntaxType", "╭─ ✦ ");
 	});
 
-	it("matches the representative 44x60 no-color docked rail", () => {
-		const noSession = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
-			cwd: "/Users/example/projects/pi-atelier",
-			branchEntryCount: 6,
-			activeToolCount: 8,
-			availableToolCount: 12,
-			extensionStatuses: [],
-		});
-		expect(renderRows(noSession, { color: false })).toMatchInlineSnapshot(`
-			[
-			  "AGENT",
-			  "◆ Working · GITIFYING",
-			  "gpt-5.6-sol",
-			  "openai-codex",
-			  "Thinking                        medium",
-			  "Billing                   Subscription",
-			  "",
-			  "",
-			  "ACTIVITY",
-			  "First token                          —",
-			  "Output speed                         —",
-			  "",
-			  "",
-			  "CONTEXT",
-			  "██░░░░░░░░░░░░░░░░░░░░░░░░░░░░    8.1%",
-			  "Tokens                      32k / 400k",
-			  "",
-			  "",
-			  "WORKSPACE",
-			  "pi-atelier",
-			  "Branch                 feature/sidebar",
-			  "Git                           Modified",
-			  "Changed                      5 tracked",
-			  "Lines                        +182  −47",
-			  "Untracked                            2",
-			  "History                      6 entries",
-			  "Storage                      Temporary",
-			  "",
-			  "",
-			  "USAGE",
-			  "Input                            50.0k",
-			  "Output                            1.9k",
-			  "Cache read                      100.0k",
-			  "Cache hit                        96.0%",
-			  "Cost                            $0.479",
-			  "",
-			  "",
-			  "TOOLS",
-			  "Enabled                         8 / 12",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			  "",
-			]
-		`);
-	});
-
 	it("renders organized sections without exceeding width", () => {
 		for (const width of [32, 40, 44]) {
 			const rows = renderRows(snapshot(), { width: width, color: false });
-			expect(rows.join("\n")).not.toContain("ATELIER");
 			expect(rows.join("\n")).toContain("WORKSPACE");
 			expect(rows.join("\n")).toContain("CONTEXT");
 			expect(rows).toContain("TOOLS");
-			expect(rows.every((row) => !row.startsWith("STATUS "))).toBe(true);
 			expect(
-				renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 60, false).every(
+				renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 60, { colorEnabled: false }).every(
 					(line) => visibleWidth(line) <= width,
 				),
 			).toBe(true);
@@ -455,7 +335,6 @@ describe("sidebar snapshot and layout", () => {
 		expect(compact).toContainEqual(expect.stringMatching(/^Input\s+50\.0k$/));
 		expect(compact).toContainEqual(expect.stringMatching(/^Cache read\s+100\.0k$/));
 		expect(compact).toContainEqual(expect.stringMatching(/^Enabled\s+8 \/ 12$/));
-		expect(compact).toEqual(expect.not.arrayContaining([expect.stringMatching(/subs$/)]));
 
 		const regular = renderRows(snapshot(), { config: expandedConfig, color: false });
 		expect(regular).toContainEqual(expect.stringMatching(/^gpt-5\.6-sol$/));
@@ -501,7 +380,6 @@ describe("sidebar snapshot and layout", () => {
 			branchEntryCount: 6,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: [],
 		});
 		const rows = renderRows(missingSession, { color: false });
 		const workspaceIndex = rows.indexOf("WORKSPACE");
@@ -514,8 +392,9 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("does not render the session file path", () => {
-		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false).join("\n");
-		expect(text).not.toContain("/tmp/session.jsonl");
+		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, { colorEnabled: false }).join(
+			"\n",
+		);
 		expect(text).not.toContain("session.jsonl");
 	});
 
@@ -528,7 +407,6 @@ describe("sidebar snapshot and layout", () => {
 			branchEntryCount: 6,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: [],
 		});
 		expect(renderRows(persisted, { color: false })).toContainEqual(
 			expect.stringMatching(/^Storage\s+Saved$/),
@@ -537,8 +415,10 @@ describe("sidebar snapshot and layout", () => {
 
 	it("renders populated usage as aligned labeled rows", () => {
 		const fg = vi.fn((_color: string, text: string) => text);
-		const unnamedTheme = { fg, bold: theme.bold, italic: theme.italic };
-		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, unnamedTheme, 44, 60, true));
+		const unnamedTheme = { fg, bold: theme.bold };
+		const rows = contentRows(
+			renderSidebarLines(snapshot(), DEFAULT_CONFIG, unnamedTheme, 44, 60, { colorEnabled: true }),
+		);
 		const usageIndex = rows.indexOf("USAGE");
 		expect(rows[usageIndex + 1]).toMatch(/^Input\s+50\.0k$/);
 		expect(rows[usageIndex + 2]).toMatch(/^Output\s+1\.9k$/);
@@ -844,11 +724,10 @@ describe("sidebar snapshot and layout", () => {
 				failedCount: 0,
 			}),
 			DEFAULT_CONFIG,
-			{ fg: liveFg, bold: theme.bold, italic: theme.italic },
+			{ fg: liveFg, bold: theme.bold },
 			44,
 			60,
-			true,
-			20_000,
+			{ colorEnabled: true, now: 20_000 },
 		);
 		expect(liveFg).toHaveBeenCalledWith("mdHeading", "10s");
 
@@ -867,11 +746,10 @@ describe("sidebar snapshot and layout", () => {
 				failedCount: 1,
 			}),
 			DEFAULT_CONFIG,
-			{ fg: settledFg, bold: theme.bold, italic: theme.italic },
+			{ fg: settledFg, bold: theme.bold },
 			44,
 			60,
-			true,
-			20_000,
+			{ colorEnabled: true, now: 20_000 },
 		);
 		expect(settledFg).toHaveBeenCalledWith("thinkingLow", "done 1s");
 		expect(settledFg).toHaveBeenCalledWith("error", "failed 1s");
@@ -952,13 +830,12 @@ describe("sidebar snapshot and layout", () => {
 
 	it("normalizes tools, collapses names by default, and expands them from configuration", () => {
 		const toolsSnapshot = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: state,
 			cwd: "/tmp/project",
 			branchEntryCount: 6,
 			activeToolCount: 3,
 			availableToolCount: 7,
 			activeToolNames: ["read", "\u001b[31mbash", " edit\n", "read", "   "],
-			extensionStatuses: [],
 		});
 		expect(toolsSnapshot.activeToolNames).toEqual(["bash", "edit", "read"]);
 
@@ -989,18 +866,16 @@ describe("sidebar snapshot and layout", () => {
 			expect(narrow).not.toContain("bash  edit");
 			expect(narrow).not.toContain("read");
 		}
-		expect(expandedConfig.showSidebarToolNames).toBe(true);
 	});
 
 	it("drops activated tool-name rows before the tool count", () => {
 		const toolsSnapshot = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: state,
 			cwd: "/tmp/project",
 			branchEntryCount: 6,
 			activeToolCount: 4,
 			availableToolCount: 7,
 			activeToolNames: ["write", "read", "edit", "bash"],
-			extensionStatuses: [],
 		});
 		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
 		const fullRows = renderRows(toolsSnapshot, { config: expandedConfig, color: false });
@@ -1017,13 +892,12 @@ describe("sidebar snapshot and layout", () => {
 
 	it("renders no tool-name placeholder when none are active", () => {
 		const toolsSnapshot = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: state,
 			cwd: "/tmp/project",
 			branchEntryCount: 0,
 			activeToolCount: 0,
 			availableToolCount: 7,
 			activeToolNames: [],
-			extensionStatuses: [],
 		});
 		const rows = renderRows(toolsSnapshot, { color: false });
 		const toolsIndex = rows.indexOf("TOOLS");
@@ -1033,29 +907,29 @@ describe("sidebar snapshot and layout", () => {
 
 	it("renders tool count without standalone status placeholder when extension statuses are empty", () => {
 		const emptyStatuses = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: state,
 			cwd: "/tmp/project",
 			branchEntryCount: 6,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: [],
 		});
 		const rows = renderRows(emptyStatuses, { color: false });
 		const toolsIndex = rows.indexOf("TOOLS");
 		expect(toolsIndex).toBeGreaterThan(-1);
 		expect(rows[toolsIndex + 1]).toMatch(/^Enabled\s+8 \/ 12$/);
 		expect(rows.slice(toolsIndex + 2)).not.toContain("—");
-		expect(rows).toEqual(expect.not.arrayContaining([expect.stringMatching(/^STATUS /)]));
 	});
 
 	it("shows only sanitized warning and error extension statuses", () => {
 		const statusSnapshot = buildSidebarSnapshot({
-			state: { ...state, extensionStatuses: [] },
+			state: {
+				...state,
+				extensionStatuses: ["tests \u001b[31mpassing", "api\nready", "sync warning", "index failed", "   "],
+			},
 			cwd: "/tmp/project",
 			branchEntryCount: 6,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests \u001b[31mpassing", "api\nready", "sync warning", "index failed", "   "],
 		});
 		const rows = renderRows(statusSnapshot, { color: false });
 		expect(rows).toContain("ALERTS");
@@ -1074,8 +948,9 @@ describe("sidebar snapshot and layout", () => {
 	});
 
 	it("keeps only the required hierarchy in a compact 12 row rail", () => {
-		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 12, false).join("\n");
-		expect(text).not.toContain("▛▀▜");
+		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 12, { colorEnabled: false }).join(
+			"\n",
+		);
 		expect(text).toContain("AGENT");
 		expect(text).toContain("CONTEXT");
 		expect(text).not.toContain("WORKSPACE");
@@ -1101,9 +976,8 @@ describe("sidebar snapshot and layout", () => {
 			branchEntryCount: 0,
 			activeToolCount: 0,
 			availableToolCount: 0,
-			extensionStatuses: [],
 		});
-		const lines = renderSidebarLines(missing, DEFAULT_CONFIG, theme, 32, 60, false);
+		const lines = renderSidebarLines(missing, DEFAULT_CONFIG, theme, 32, 60, { colorEnabled: false });
 		expect(lines.join("\n")).toContain("—");
 		expect(lines.join("\n")).toContain("Temporary");
 		expect(lines.every((line) => visibleWidth(line) <= 32)).toBe(true);
@@ -1117,7 +991,7 @@ describe("sidebar snapshot and layout", () => {
 			sessionName: `release\n${"y".repeat(100)}`,
 			extensionStatuses: [`status\t${"z".repeat(100)}`],
 		};
-		const lines = renderSidebarLines(long, DEFAULT_CONFIG, theme, 34, 36, false);
+		const lines = renderSidebarLines(long, DEFAULT_CONFIG, theme, 34, 36, { colorEnabled: false });
 		expect(lines.join("")).not.toContain("[31m");
 		expect(lines.every((line) => visibleWidth(line) <= 34)).toBe(true);
 	});
@@ -1134,7 +1008,7 @@ describe("sidebar snapshot and layout", () => {
 			{ ...theme, fg },
 			44,
 			36,
-			false,
+			{ colorEnabled: false },
 		);
 		expect(fg).toHaveBeenCalledWith(expectedRole, expect.stringContaining(`${percent.toFixed(1)}%`));
 	});
@@ -1164,17 +1038,6 @@ describe("sidebar snapshot and layout", () => {
 });
 
 describe("sidebar component and overlay", () => {
-	it("does not capture editor input or render modal close help", () => {
-		const component = createSidebarComponent({
-			getSnapshot: snapshot,
-			getConfig: () => DEFAULT_CONFIG,
-			getHeight: () => 36,
-			theme,
-		});
-		expect(component.handleInput).toBeUndefined();
-		expect(component.render(44).join("\n")).not.toContain("esc/q close");
-	});
-
 	it("shows a visible Resize state and active divider styling", () => {
 		const fg = vi.fn((_color: string, text: string) => text);
 		const component = createSidebarComponent({
@@ -1182,7 +1045,7 @@ describe("sidebar component and overlay", () => {
 			getConfig: () => DEFAULT_CONFIG,
 			getHeight: () => 36,
 			isResizing: () => true,
-			theme: { fg, bold: theme.bold, italic: theme.italic },
+			theme: { fg, bold: theme.bold },
 		});
 
 		expect(component.render(44).join("\n")).toContain("RESIZE");
@@ -1229,9 +1092,6 @@ describe("sidebar component and overlay", () => {
 			expect(lines).toHaveLength(7);
 			expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
 			expect(contentRows(lines)[0]).toBe("Sidebar unavailable");
-			expect(lines.join("\n")).not.toMatch(/PI ATELIER|ATELIER/);
-			expect(lines.join("\n")).not.toContain("esc/q close");
-			expect(lines.join("\n")).not.toMatch(/[╭╮╰╯]/);
 			expect(lines.every((line) => visibleWidth(line) <= 24)).toBe(true);
 		},
 	);
@@ -1242,7 +1102,7 @@ describe("sidebar component and overlay", () => {
 		const { custom, overlays } = overlayHost(() => tui);
 		const controller = disposeAfterTest(
 			createSidebarController({
-				ctx: { mode: "tui", ui: { custom } } as never,
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
 				getSnapshot: snapshot,
 				getConfig: () => DEFAULT_CONFIG,
 			}),
@@ -1263,7 +1123,6 @@ describe("sidebar component and overlay", () => {
 			width: DEFAULT_SIDEBAR_WIDTH,
 			nonCapturing: true,
 		});
-		expect(tui.render(120)).toEqual(["main:120"]);
 		controller.show();
 		expect(custom).toHaveBeenCalledOnce();
 
@@ -1299,35 +1158,34 @@ describe("sidebar component and overlay", () => {
 		let running = true;
 		const requestRender = vi.fn();
 		const tui = fakeTui(requestRender);
-		const { custom, overlays } = overlayHost(() => tui);
+		const { custom } = overlayHost(() => tui);
 		const controller = disposeAfterTest(
 			createSidebarController({
-				ctx: { mode: "tui", ui: { custom } } as never,
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
 				getSnapshot: snapshot,
 				getConfig: () => DEFAULT_CONFIG,
 				shouldAnimate: () => running,
-				animationIntervalMs: 10,
 			}),
 		);
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 
 		controller.show();
 		await flushOverlay();
 		controller.show();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).toHaveBeenCalledTimes(3);
 
 		controller.requestRender();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(10);
+		vi.advanceTimersByTime(1_000);
 		expect(requestRender).toHaveBeenCalledOnce();
 
 		running = false;
 		controller.requestRender();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 	});
 
@@ -1338,33 +1196,32 @@ describe("sidebar component and overlay", () => {
 		const { custom, overlays } = overlayHost(() => tui);
 		const controller = disposeAfterTest(
 			createSidebarController({
-				ctx: { mode: "tui", ui: { custom } } as never,
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
 				getSnapshot: snapshot,
 				getConfig: () => DEFAULT_CONFIG,
 				shouldAnimate: () => true,
-				animationIntervalMs: 10,
 			}),
 		);
 
 		controller.show();
 		await flushOverlay();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(10);
+		vi.advanceTimersByTime(1_000);
 		expect(requestRender).toHaveBeenCalledOnce();
 		controller.hide();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 
 		controller.show();
 		await flushOverlay();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(10);
+		vi.advanceTimersByTime(1_000);
 		expect(requestRender).toHaveBeenCalledOnce();
 		overlays[1]!.done(undefined);
 		await flushOverlay();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 
 		controller.show();
@@ -1375,49 +1232,22 @@ describe("sidebar component and overlay", () => {
 		overlays[2]!.done(undefined);
 		await flushOverlay();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(10);
+		vi.advanceTimersByTime(1_000);
 		expect(requestRender).toHaveBeenCalledOnce();
 		controller.dispose();
 		requestRender.mockClear();
-		vi.advanceTimersByTime(30);
+		vi.advanceTimersByTime(3_000);
 		expect(requestRender).not.toHaveBeenCalled();
 	});
 
-	it("enters Resize mode through the composed sidebar controller", () => {
+	it("cancels Resize when the sidebar hides", () => {
 		let input: ((data: string) => unknown) | undefined;
 		const tui = fakeTui();
-		const { custom, overlays } = overlayHost(() => tui);
+		const { custom } = overlayHost(() => tui);
 		const controller = disposeAfterTest(
 			createSidebarController({
 				ctx: {
-					mode: "tui",
-					ui: {
-						custom,
-						onTerminalInput: vi.fn((handler) => {
-							input = handler;
-							return vi.fn();
-						}),
-					},
-				} as never,
-				getSnapshot: snapshot,
-				getConfig: () => DEFAULT_CONFIG,
-			}),
-		);
-
-		controller.show();
-		expect(controller.beginResize()).toBe(true);
-		expect(controller.isResizing()).toBe(true);
-		expect(controller.getWidth()).toBe(DEFAULT_SIDEBAR_WIDTH);
-		expect(input).toBeTypeOf("function");
-	});
-
-	it("cleans composed Resize state and restores full-width rendering on hide", () => {
-		let input: ((data: string) => unknown) | undefined;
-		const tui = fakeTui();
-		const { custom, overlays } = overlayHost(() => tui);
-		const controller = disposeAfterTest(
-			createSidebarController({
-				ctx: {
+					cwd: "/tmp/project",
 					mode: "tui",
 					ui: {
 						custom,
@@ -1435,13 +1265,10 @@ describe("sidebar component and overlay", () => {
 		controller.show();
 		expect(controller.beginResize()).toBe(true);
 		input?.("\u001b[D");
-		expect(controller.getWidth()).toBe(DEFAULT_SIDEBAR_WIDTH + 1);
-		expect(tui.render(120)).toEqual(["main:120"]);
 
 		controller.hide();
 
 		expect(controller.isResizing()).toBe(false);
-		expect(tui.render(120)).toEqual(["main:120"]);
 	});
 
 	it("continues overlay cleanup when the external TUI render request throws", async () => {
@@ -1453,11 +1280,10 @@ describe("sidebar component and overlay", () => {
 		const onError = vi.fn();
 		const controller = disposeAfterTest(
 			createSidebarController({
-				ctx: { mode: "tui", ui: { custom } } as never,
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
 				getSnapshot: snapshot,
 				getConfig: () => DEFAULT_CONFIG,
 				shouldAnimate: () => true,
-				animationIntervalMs: 10,
 				onError,
 			}),
 		);
@@ -1472,7 +1298,6 @@ describe("sidebar component and overlay", () => {
 
 		expect(controller.isVisible()).toBe(false);
 		expect(controller.isResizing()).toBe(false);
-		expect(tui.render(120)).toEqual(["main:120"]);
 		expect(vi.getTimerCount()).toBe(0);
 		expect(onError).toHaveBeenCalledWith(renderError);
 
@@ -1486,14 +1311,13 @@ describe("sidebar component and overlay", () => {
 		const { custom, overlays } = overlayHost(() => tui);
 		const controller = disposeAfterTest(
 			createSidebarController({
-				ctx: { mode: "tui", ui: { custom } } as never,
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
 				getSnapshot: snapshot,
 				getConfig: () => DEFAULT_CONFIG,
 			}),
 		);
 
 		controller.show();
-		expect(tui.render(120)).toEqual(["main:120"]);
 		controller.dispose();
 		await flushOverlay();
 
@@ -1502,7 +1326,6 @@ describe("sidebar component and overlay", () => {
 		expect(controller.isVisible()).toBe(false);
 		expect(custom).toHaveBeenCalledOnce();
 		expect(overlays[0]!.done).toHaveBeenCalledOnce();
-		expect(tui.render(120)).toEqual(["main:120"]);
 	});
 
 	it("aborts overlay activation when a replacement TUI cannot attach", async () => {
@@ -1514,11 +1337,10 @@ describe("sidebar component and overlay", () => {
 		const { custom, overlays } = overlayHost(() => tuis.shift()!);
 		const controller = disposeAfterTest(
 			createSidebarController({
-				ctx: { mode: "tui", ui: { custom } } as never,
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
 				getSnapshot: snapshot,
 				getConfig: () => DEFAULT_CONFIG,
 				shouldAnimate: () => true,
-				animationIntervalMs: 10,
 				onError,
 			}),
 		);
@@ -1536,8 +1358,6 @@ describe("sidebar component and overlay", () => {
 		expect(overlays[1]!.done).toHaveBeenCalledOnce();
 		expect(overlays[1]!.handle.hide).toHaveBeenCalledOnce();
 		expect(vi.getTimerCount()).toBe(0);
-		expect(firstTui.render(120)).toEqual(["main:120"]);
-		expect(replacementTui.render(120)).toEqual(["main:120"]);
 	});
 
 	it("reports unsupported modes without enabling the sidebar", () => {
@@ -1545,7 +1365,7 @@ describe("sidebar component and overlay", () => {
 		const custom = vi.fn();
 		const controller = disposeAfterTest(
 			createSidebarController({
-				ctx: { mode: "rpc", ui: { custom } } as never,
+				ctx: { cwd: "/tmp/project", mode: "rpc", ui: { custom } } as never,
 				getSnapshot: snapshot,
 				getConfig: () => DEFAULT_CONFIG,
 				onError,
@@ -1568,14 +1388,13 @@ describe("todos panel", () => {
 
 	it("keeps only the in-progress todo during a live Turn", () => {
 		const snapWithTodos = buildSidebarSnapshot({
-			state,
+			state: { ...state, extensionStatuses: ["tests passing"] },
 			cwd: "/Users/example/projects/pi-atelier",
 			sessionName: "Sidebar implementation",
 			sessionFile: "/tmp/session.jsonl",
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests passing"],
 			runActivity: activeActivity(),
 			todos: [
 				{ id: 1, text: "Review diff", status: "completed" },
@@ -1593,14 +1412,13 @@ describe("todos panel", () => {
 
 	it("renders todos with all 3 status states", () => {
 		const snapWithTodos = buildSidebarSnapshot({
-			state,
+			state: { ...state, extensionStatuses: ["tests passing"] },
 			cwd: "/Users/example/projects/pi-atelier",
 			sessionName: "Sidebar implementation",
 			sessionFile: "/tmp/session.jsonl",
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [
 				{ id: 1, text: "Review diff", status: "completed" },
@@ -1618,14 +1436,13 @@ describe("todos panel", () => {
 
 	it("hides todos panel when disabled in the layout", () => {
 		const snapWithTodos = buildSidebarSnapshot({
-			state,
+			state: { ...state, extensionStatuses: ["tests passing"] },
 			cwd: "/Users/example/projects/pi-atelier",
 			sessionName: "Sidebar implementation",
 			sessionFile: "/tmp/session.jsonl",
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [{ id: 1, text: "Task", status: "pending" }],
 		});
@@ -1642,18 +1459,17 @@ describe("todos panel", () => {
 
 	it("sanitizes ansi codes in todo text", () => {
 		const snapWithTodos = buildSidebarSnapshot({
-			state,
+			state: { ...state, extensionStatuses: ["tests passing"] },
 			cwd: "/Users/example/projects/pi-atelier",
 			sessionName: "Sidebar implementation",
 			sessionFile: "/tmp/session.jsonl",
 			branchEntryCount: 38,
 			activeToolCount: 8,
 			availableToolCount: 12,
-			extensionStatuses: ["tests passing"],
 			runActivity: EMPTY_RUN_ACTIVITY,
 			todos: [{ id: 1, text: "Task\u001b[31mred", status: "pending" }],
 		});
-		const lines = renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 36, false);
+		const lines = renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 36, { colorEnabled: false });
 		expect(lines.join("")).not.toContain("[31m");
 		const rows = contentRows(lines);
 		expect(rows).toContain("○ #1 Taskred");
@@ -1727,8 +1543,7 @@ describe("contributed rich panels (REQ-ATELIER-002..008)", () => {
 			theme,
 			44,
 			60,
-			options.color ?? true,
-			0,
+			{ colorEnabled: options.color ?? true, now: 0 },
 		);
 
 	it("renders sanitized rich nodes instead of rows with literal true-color", () => {

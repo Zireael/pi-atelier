@@ -2,8 +2,10 @@
 
 ## Unreleased
 
+## 0.14.0 — 2026-10-03
+
 - Automatically collapse the Sidebar when terminal width is limited and restore it when space returns. Add independent Auto/Manual modes and show/hide controls; preserve preferred width and full TODO output while collapsed ([#76](https://github.com/michaelmjhhhh/pi-atelier/issues/76)).
-- Internal: make the package-content and packed-install checks run again on Windows and under npm 12. They launched npm in a way Windows cannot resolve, and npm 12 prints `npm pack --json` as an object keyed by package name rather than an array.
+- Internal: restore package-content and packed-install checks on Windows and under npm 12, preserve useful npm errors, and handle temporary paths containing spaces and ampersands when running the scripts directly ([#85](https://github.com/michaelmjhhhh/pi-atelier/pull/85)).
 
 ## 0.13.0 — 2026-10-02
 

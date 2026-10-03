@@ -1,33 +1,24 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { npm, npmPackReport } from "./npm-run.mjs";
 
 const repoDir = fileURLToPath(new URL("..", import.meta.url));
 const tempDir = mkdtempSync(join(tmpdir(), "pi-atelier-install-"));
 
-function npm(args, cwd) {
-	const result = spawnSync("npm", args, { cwd, encoding: "utf8" });
-	if (result.error) throw result.error;
-	if (result.status !== 0) {
-		throw new Error(
-			`npm ${args.join(" ")} failed (${result.signal ?? result.status})\n${result.stdout}${result.stderr}`,
-		);
-	}
-	return result.stdout;
-}
-
 try {
-	const [packed] = JSON.parse(npm(["pack", "--json", "--pack-destination", tempDir], repoDir));
+	const packed = npmPackReport(["--pack-destination", tempDir], { cwd: repoDir });
 	const consumerDir = join(tempDir, "consumer");
 	mkdirSync(consumerDir);
 	writeFileSync(
 		join(consumerDir, "package.json"),
 		JSON.stringify({ name: "pi-atelier-install-check", private: true }),
 	);
-	npm(["install", "--include=peer", "--no-fund", join(tempDir, packed.filename)], consumerDir);
+	npm(["install", "--include=peer", "--no-fund", join(tempDir, packed.filename)], {
+		cwd: consumerDir,
+	});
 	const lock = JSON.parse(readFileSync(join(consumerDir, "package-lock.json"), "utf8"));
 	const unexpected = Object.keys(lock.packages).filter(
 		(path) => path !== "" && path !== "node_modules/pi-atelier",

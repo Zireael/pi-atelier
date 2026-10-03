@@ -138,11 +138,12 @@ function labeledRow(
 	width: number,
 	palette: AtelierPalette,
 	role: PaletteRole = "primary",
+	labelRole: PaletteRole = "muted",
 ): string {
 	const left = truncateToWidth(label, Math.min(LABEL_COLUMN_WIDTH, Math.max(0, width - 8)), "…");
 	const right = truncateToWidth(value, Math.max(0, width - visibleWidth(left) - 1), "…");
 	return truncateToWidth(
-		`${palette.paint("muted", left)}${" ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)))}${palette.paint(role, right)}`,
+		`${palette.paint(labelRole, left)}${" ".repeat(Math.max(1, width - visibleWidth(left) - visibleWidth(right)))}${palette.paint(role, right)}`,
 		width,
 		"",
 	);
@@ -387,33 +388,65 @@ function statusAlerts(snapshot: SidebarSnapshot): { role: "error" | "warning"; t
 		});
 }
 
-function toolStatusRole(status: ToolActivity["status"]): PaletteRole {
-	if (status === "failed") return "error";
-	if (status === "running") return "working";
-	return "ready";
+const TOOL_STATUS = {
+	running: { role: "working", glyph: "◐" },
+	done: { role: "ready", glyph: "✓" },
+	failed: { role: "error", glyph: "✗" },
+} as const satisfies Record<ToolActivity["status"], { role: PaletteRole; glyph: string }>;
+
+const MIN_TOOL_SUMMARY_COLUMNS = 6;
+
+/** Shared across rows so summaries line up in one column. */
+function toolNameWidth(tools: readonly ToolActivity[], contentWidth: number): number {
+	const widest = Math.max(4, ...tools.map((tool) => visibleWidth(tool.name || "tool")));
+	return Math.min(widest, 10, Math.max(0, contentWidth));
 }
 
 function toolActivityRow(
 	tool: ToolActivity,
 	contentWidth: number,
+	nameWidth: number,
 	palette: AtelierPalette,
 	now: number,
 	extraLive = 0,
 ): string {
-	const name = tool.name || "tool";
-	const duration = formatDuration(tool.durationMs ?? now - tool.startedAt);
-	const status =
-		tool.status !== "running"
-			? `${tool.status} ${duration}`
-			: extraLive > 0
-				? `${duration} · +${extraLive}`
-				: duration;
-	const nameWidth = Math.min(Math.max(visibleWidth(name), 4), 10, Math.max(0, contentWidth));
-	const summaryWidth = Math.max(0, contentWidth - nameWidth - visibleWidth(status) - 2);
-	const row = `${fitToWidth(palette.paint("muted", name), nameWidth)} ${fitToWidth(
-		palette.paint(tool.summary ? "primary" : "dim", tool.summary || PLACEHOLDER),
-		summaryWidth,
-	)} ${palette.paint(toolStatusRole(tool.status), status)}`;
+	const status = TOOL_STATUS[tool.status];
+	const live = tool.status === "running";
+	const elapsed = tool.durationMs ?? now - tool.startedAt;
+	// Successful tools under a second carry no timing worth reading; failures always keep theirs.
+	const duration = tool.status !== "done" || elapsed >= 1_000 ? formatDuration(elapsed) : "";
+	const trailing = live && extraLive > 0 ? `${duration} · +${extraLive}` : duration;
+	const trailingWidth = trailing ? visibleWidth(trailing) + 1 : 0;
+	// Glyph and trailing timing are kept whole. On narrow rows the name gives way
+	// first, then the summary is dropped rather than shown as a lone ellipsis.
+	const available = Math.max(0, contentWidth - trailingWidth - 2);
+	let fittedNameWidth = Math.min(
+		nameWidth,
+		Math.max(Math.min(4, available), available - MIN_TOOL_SUMMARY_COLUMNS - 1),
+	);
+	let summaryWidth = available - fittedNameWidth - 1;
+	if (summaryWidth < 3) {
+		fittedNameWidth = Math.min(nameWidth, available);
+		summaryWidth = 0;
+	}
+	const name = palette.paint(
+		"dim",
+		sanitizeInline(truncateToWidth(tool.name || "tool", fittedNameWidth, "…")),
+	);
+	const summary = tool.summary
+		? palette.paint(
+				tool.status === "done" ? "muted" : "primary",
+				sanitizeInline(truncateToWidth(tool.summary, summaryWidth, "…")),
+			)
+		: palette.paint("dim", PLACEHOLDER);
+	const row = [
+		palette.paint(status.role, status.glyph),
+		fittedNameWidth > 0 ? fitToWidth(name, fittedNameWidth) : "",
+		summaryWidth > 0 ? fitToWidth(summary, summaryWidth) : "",
+		trailing ? palette.paint(tool.status === "done" ? "dim" : status.role, trailing) : "",
+	]
+		.filter(Boolean)
+		.join(" ");
 	return truncateToWidth(row, contentWidth, "");
 }
 
@@ -422,15 +455,29 @@ function runPhaseRole(activity: RunActivitySnapshot): PaletteRole {
 	return activity.failedCount > 0 ? "error" : "chartGreen";
 }
 
-function runSummaryRow(activity: RunActivitySnapshot, palette: AtelierPalette, now: number): string {
+function runSummaryRow(
+	activity: RunActivitySnapshot,
+	width: number,
+	palette: AtelierPalette,
+	now: number,
+): string {
 	const role = runPhaseRole(activity);
-	if (activity.phase === "settled") {
-		const duration = formatDuration(activity.durationMs ?? now - (activity.startedAt ?? now));
-		return palette.paint(role, `Last run · ${duration}`);
-	}
-	const duration = formatDuration(now - (activity.startedAt ?? now));
-	const label = activity.turnNumber === undefined ? "Run" : `Turn ${activity.turnNumber}`;
-	return palette.paint(role, `${label} · ${activity.phase} ${duration}`);
+	const settled = activity.phase === "settled";
+	const label = settled
+		? "Last run"
+		: activity.turnNumber === undefined
+			? "Run"
+			: `Turn ${activity.turnNumber}`;
+	const duration = formatDuration(
+		settled ? (activity.durationMs ?? now - (activity.startedAt ?? now)) : now - (activity.startedAt ?? now),
+	);
+	return labeledRow(label, duration, width, palette, role, role);
+}
+
+function toolCountRow(activity: RunActivitySnapshot, width: number, palette: AtelierPalette): string {
+	const { completedCount, failedCount } = activity;
+	const value = failedCount > 0 ? `${completedCount} done · ${failedCount} failed` : `${completedCount} done`;
+	return labeledRow("Tools", value, width, palette, failedCount > 0 ? "error" : "muted");
 }
 
 function responsePerformanceRows(
@@ -487,6 +534,8 @@ interface SidebarGroup {
 	panel?: PanelChrome;
 	rows: string[];
 	dropRank: number;
+	/** Shown only once one of these groups has been dropped; a summary of rows still visible adds nothing. */
+	summarizes?: readonly string[];
 }
 
 function activityGroups(
@@ -506,21 +555,18 @@ function activityGroups(
 	const visibleActive = liveTurn ? sortedActive.slice(-1) : sortedActive;
 	const extraLive = sortedActive.length - visibleActive.length;
 	const recent = liveTurn ? [] : activity.recentTools.filter((tool) => !activeIds.has(tool.id)).slice(0, 3);
-	const aggregate =
-		liveTurn || (activity.completedCount === 0 && activity.failedCount === 0)
-			? []
-			: [
-					palette.paint(
-						activity.failedCount > 0 ? "error" : "ready",
-						`tools ${activity.completedCount} done · ${activity.failedCount} failed`,
-					),
-				];
+	const nameWidth = toolNameWidth([...visibleActive, ...recent], contentWidth);
+	const toolCount = activity.completedCount + activity.failedCount;
+	const aggregate = liveTurn || toolCount === 0 ? [] : [toolCountRow(activity, contentWidth, palette)];
+	// When every counted tool has its own row, the count only matters once a row is dropped for height.
+	const summarizes =
+		toolCount > recent.length ? undefined : recent.map((tool) => `activityRecent:${tool.id}`);
 	return [
 		{
 			name: "activityCore",
 			panel,
 			rows: [
-				...(activity.phase === "idle" ? [] : [runSummaryRow(activity, palette, now)]),
+				...(activity.phase === "idle" ? [] : [runSummaryRow(activity, contentWidth, palette, now)]),
 				...responsePerformanceRows(activity, contentWidth, palette),
 			],
 			dropRank: DROP_RANK.required,
@@ -528,17 +574,23 @@ function activityGroups(
 		...visibleActive.map((tool, index) => ({
 			name: `activityActive:${tool.id}`,
 			panel,
-			rows: [toolActivityRow(tool, contentWidth, palette, now, extraLive)],
+			rows: [toolActivityRow(tool, contentWidth, nameWidth, palette, now, extraLive)],
 			dropRank: DROP_RANK.activeTool + (visibleActive.length - index) / 100,
 		})),
 		...recent.map((tool, index) => ({
 			name: `activityRecent:${tool.id}`,
 			panel,
-			rows: [toolActivityRow(tool, contentWidth, palette, now)],
+			rows: [toolActivityRow(tool, contentWidth, nameWidth, palette, now)],
 			dropRank:
 				index === 0 ? DROP_RANK.latestRecentTool : DROP_RANK.olderRecentTool + (recent.length - index - 1),
 		})),
-		{ name: "activityAggregate", panel, rows: aggregate, dropRank: DROP_RANK.aggregate },
+		{
+			name: "activityAggregate",
+			panel,
+			rows: aggregate,
+			dropRank: DROP_RANK.aggregate,
+			...(summarizes ? { summarizes } : {}),
+		},
 	];
 }
 
@@ -554,13 +606,18 @@ function measureGroups(groups: readonly SidebarGroup[]): number {
 	return height;
 }
 
+function withoutRedundantSummaries(groups: readonly SidebarGroup[]): SidebarGroup[] {
+	const names = new Set(groups.map((group) => group.name));
+	return groups.filter((group) => !group.summarizes || group.summarizes.some((name) => !names.has(name)));
+}
+
 function composeGroups(groups: readonly SidebarGroup[], height: number): SidebarGroup[] {
 	let candidate = groups.filter((group) => group.rows.length > 0);
 	// Recount cheap row metadata after removal so newly adjacent groups share panel chrome.
 	// Painting happens only after selection, never for the discarded candidates.
-	while (measureGroups(candidate) > height) {
+	while (measureGroups(withoutRedundantSummaries(candidate)) > height) {
 		let drop: SidebarGroup | undefined;
-		for (const group of candidate) {
+		for (const group of withoutRedundantSummaries(candidate)) {
 			if (group.dropRank < (drop?.dropRank ?? DROP_RANK.required)) drop = group;
 		}
 		if (drop) {
@@ -577,12 +634,12 @@ function composeGroups(groups: readonly SidebarGroup[], height: number): Sidebar
 		].find(({ name, minimum }) =>
 			candidate.some((group) => group.name === name && group.rows.length > minimum),
 		);
-		if (!compact) return candidate;
+		if (!compact) break;
 		candidate = candidate.map((group) =>
 			group.name === compact.name ? { ...group, rows: group.rows.slice(0, -1) } : group,
 		);
 	}
-	return candidate;
+	return withoutRedundantSummaries(candidate);
 }
 
 function renderGroups(

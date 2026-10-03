@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.15.0 — 2026-10-03
 
 - Give each Sidebar panel its own resting color (Activity green, Context cyan, Usage gold, Tools pink) and tint panel frames to match their headers; status colors still take over while working, on failures, and at context thresholds ([#86](https://github.com/michaelmjhhhh/pi-atelier/pull/86)).
 - Show the Workspace branch on its own full-width row, color added and removed lines, and combine changed files and lines into one row when they fit ([#86](https://github.com/michaelmjhhhh/pi-atelier/pull/86)).

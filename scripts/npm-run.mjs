@@ -22,7 +22,10 @@ function resolveNpm() {
  */
 export function npm(args, options = {}) {
 	const { command, prefix, shell } = resolveNpm();
-	const result = spawnSync(command, [...prefix, ...args], {
+	// The Windows fallback receives only flags and filesystem paths; quote each
+	// argument so spaces and shell operators in those paths remain literal.
+	const argv = shell ? args.map((arg) => `"${arg}"`) : [...prefix, ...args];
+	const result = spawnSync(command, argv, {
 		cwd: options.cwd,
 		encoding: "utf8",
 		shell,

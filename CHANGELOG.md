@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Internal: expose `getHomePath`/`setHomePath` on `display-path` so tests can stub the home directory portably instead of faking `process.env.HOME`, which `os.homedir()` ignores on Windows; fix two `run-activity` path tests that only worked on POSIX.
+- Polish the host-side regular-mode Sidebar rendering: recognize the host's transcript renderer structurally (regular mode plus its own `render` and terminal) instead of by Pi's class name, keep selection and OSC-52 copies out of the reserved sidebar columns on any host that exposes the selection machinery, and step the Sidebar aside while a host dialog that captures input is open on screen. Under Pi nothing changes.
+- Load under a host that serves a subset of the Pi TUI. omp replaces the `@earendil-works/pi-tui` specifier with a compatibility surface built from its own TUI, and that surface omits four names Pi publishes: `HStack`, `isViewportTUI`, `allocateImageId`, and `compositeTuiLine`. A named import of a missing export fails while the module graph links — before any of the extension's code runs — so it took the whole extension down. The four names now resolve through `src/pi-tui-host.ts`, which keeps the host's own implementation whenever the host serves one and otherwise falls back to a local one that matches Pi's: the compositor uses Pi's algorithm with every column and length clamped to the row, the viewport predicate answers by Pi's brand, the image id comes from Pi's random range, and the fullscreen `HStack` reports that the host renders no replaceable viewport root. Under omp the extension loads again and keeps its regular-screen Sidebar and image compositor; under Pi nothing changes.
+
 ## 0.15.0 — 2026-10-03
 
 - Give each Sidebar panel its own resting color (Activity green, Context cyan, Usage gold, Tools pink) and tint panel frames to match their headers; status colors still take over while working, on failures, and at context thresholds ([#86](https://github.com/michaelmjhhhh/pi-atelier/pull/86)).

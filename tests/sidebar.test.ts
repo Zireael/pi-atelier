@@ -1160,6 +1160,51 @@ describe("sidebar component and overlay", () => {
 		expect(overlays[1]!.done).toHaveBeenCalledOnce();
 	});
 
+	it("does not mount a keyboard-owning overlay on a host that is not a Pi fullscreen renderer", async () => {
+		// Regression: on a host built from a foreign TUI surface (no Pi
+		// `TuiMode`), the sidebar previously installed a live `ctx.ui.custom
+		// ({ overlay: true })` component with no `handleInput`; the host focused
+		// that overlay and discarded every keystroke, starving the editor. The
+		// mount is now gated on the host serving Pi's TUI surface
+		// (docs/upstream-pi-atelier-overlay-input.md).
+		const errors: unknown[] = [];
+		const requestRender = vi.fn();
+		// No `mode`: a foreign TUI surface (omp), not one built from Pi.
+		const tui = fakeTui(requestRender, null);
+		const { custom, overlays } = overlayHost(() => tui);
+		const controller = disposeAfterTest(
+			createSidebarController({
+				ctx: { cwd: "/tmp/project", mode: "tui", ui: { custom } } as never,
+				getSnapshot: snapshot,
+				getConfig: () => DEFAULT_CONFIG,
+				onError: (error) => errors.push(error),
+			}),
+		);
+
+		controller.show();
+		await flushOverlay();
+		// The host calls custom() to obtain the component; the factory rejects
+		// before anything is mounted, so no overlay exists and the editor keeps
+		// its keyboard.
+		expect(custom).toHaveBeenCalledOnce();
+		expect(overlays).toHaveLength(0);
+		expect(errors).toHaveLength(1); // reported, not silent
+		expect(String(errors[0])).toContain("swallow keyboard input");
+		// The show attempt is abandoned, not half-installed: the controller is
+		// off, and neither the split pane nor the overlay lifecycle leaked state.
+		expect(controller.isVisible()).toBe(false);
+
+		// Toggle still leaves the overlay path dormant on such a host.
+		controller.toggle();
+		await flushOverlay();
+		expect(overlays).toHaveLength(0);
+		expect(controller.isVisible()).toBe(false);
+		expect(requestRender).not.toHaveBeenCalled();
+
+		controller.dispose();
+		expect(overlays).toHaveLength(0);
+	});
+
 	it("animates live activity on one timer only while visible", async () => {
 		vi.useFakeTimers();
 		let running = true;

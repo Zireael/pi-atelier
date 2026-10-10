@@ -23,7 +23,12 @@ import {
 	type SidebarPanelRole,
 	sanitizeSidebarPanelText,
 } from "./sidebar-panels.js";
-import { createSplitPaneController, type SidebarMode, type SidebarStatus } from "./split-pane.js";
+import {
+	createSplitPaneController,
+	isPiTuiSurface,
+	type SidebarMode,
+	type SidebarStatus,
+} from "./split-pane.js";
 import { createInertAtelierState } from "./state.js";
 import { type SubagentCostChartGraphics, subagentCostChart } from "./subagent-cost-chart.js";
 import { errorMessage, fitToWidth, PLACEHOLDER, sanitizeInline } from "./text.js";
@@ -1293,7 +1298,6 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 			reportError(new Error("Pi Atelier sidebar requires TUI mode"));
 			return;
 		}
-
 		enabled = true;
 		const currentGeneration = ++generation;
 		if (!safely(split.show)) {
@@ -1309,6 +1313,17 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 						closed = true;
 						done(undefined);
 					};
+					// Reject before mounting anything on a host built from a foreign
+					// TUI: such a host focuses a persistent overlay and discards keys
+					// its component does not consume, so the editor would starve
+					// (docs/upstream-pi-atelier-overlay-input.md). Throwing from the
+					// factory keeps the host from ever showing the overlay, and the
+					// rejection surfaces as the controller's error notification.
+					if (!isPiTuiSurface(tui)) {
+						throw new Error(
+							"Pi Atelier sidebar overlay is unavailable on this host: the host TUI would swallow keyboard input",
+						);
+					}
 					if (!safely(() => split.attach(tui))) {
 						generation += 1;
 						abandonShow();

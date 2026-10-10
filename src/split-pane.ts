@@ -101,6 +101,20 @@ export interface SidebarStatus {
 	presentation: SidebarPresentation;
 }
 
+/**
+ * Whether the attached TUI belongs to a host built from Pi's TUI package,
+ * which publishes `TuiMode` (`"regular" | "fullscreen"`) on every renderer.
+ * A host built from another TUI reports no `mode`; such a host also routes
+ * focused-overlay input without a fall-through, so a persistent sidebar
+ * overlay without `handleInput` would swallow every keystroke (see
+ * docs/upstream-pi-atelier-overlay-input.md). The gate is on the surface,
+ * not on fullscreen: Pi's regular renderer legally mounts the same
+ * nonCapturing overlay.
+ */
+export const isPiTuiSurface = (tui: TUI | undefined): boolean =>
+	(tui as { mode?: unknown } | undefined)?.mode === "regular" ||
+	(tui as { mode?: unknown } | undefined)?.mode === "fullscreen";
+
 export interface SplitPaneControllerOptions {
 	onError?(error: unknown): void;
 	subscribeInput?(handler: (data: string) => { consume?: boolean; data?: string } | undefined): () => void;
@@ -118,6 +132,8 @@ export interface SplitPaneController {
 	setSidebarWidth(width: number): void;
 	getSidebarWidth(): number;
 	isEnabled(): boolean;
+	/** Whether the attached host serves Pi's TUI surface and tolerates a persistent nonCapturing overlay. */
+	isPiTuiSurface(): boolean;
 	beginResize(): boolean;
 	cancelResize(): void;
 	isResizing(): boolean;
@@ -715,6 +731,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		cancelResize: () => stopResize(true),
 		isResizing: () => resizing,
 		isEnabled: () => enabled,
+		isPiTuiSurface: () => isPiTuiSurface(tui),
 		overlayOptions: () => overlayLayout,
 		requestRender,
 		dispose() {
